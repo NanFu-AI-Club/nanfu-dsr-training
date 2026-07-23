@@ -1,0 +1,223 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===== 吉卜力风格全局基础 ===== */
+@layer base {
+  * { @apply border-warm-200; }
+
+  /* 确保 body 和 #root 固定在视口内，不依赖 vh 单位 */
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    position: fixed;
+    top: 0;
+    left: 0;
+  }
+
+  #root {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    @apply text-warm-800 antialiased;
+    font-feature-settings: "kern" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  /* 更柔和的滚动条 */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { @apply bg-warm-300 rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-warm-400; }
+}
+
+/* ===== 组件样式 — 吉卜力柔和风格 ===== */
+@layer components {
+  /* 卡片 — 更圆润、阴影更柔和 */
+  .card {
+    @apply bg-white rounded-2xl shadow-soft border border-warm-100/60 p-5 md:p-6
+           transition-all duration-300;
+  }
+  .card:hover {
+    @apply shadow-soft-lg;
+  }
+
+  /* 主按钮 — 天空蓝渐变 */
+  .btn-primary {
+    @apply bg-gradient-to-br from-sky-500 to-primary-600 text-white
+           px-5 py-2.5 rounded-xl font-medium
+           shadow-soft hover:shadow-soft-lg hover:from-sky-600 hover:to-primary-700
+           active:scale-[0.98] transition-all duration-200
+           disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:shadow-soft;
+  }
+
+  /* 次要按钮 — 温暖的米色 */
+  .btn-secondary {
+    @apply bg-warm-100 text-warm-700
+           px-5 py-2.5 rounded-xl font-medium
+           hover:bg-warm-200 hover:text-warm-800
+           active:scale-[0.98] transition-all duration-200
+           disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  /* 危险按钮 — 柔和的玫瑰色 */
+  .btn-danger {
+    @apply bg-gradient-to-br from-rose-400 to-rose-500 text-white
+           px-5 py-2.5 rounded-xl font-medium
+           shadow-soft hover:shadow-soft-lg hover:from-rose-500 hover:to-rose-600
+           active:scale-[0.98] transition-all duration-200;
+  }
+
+  /* 输入框 — 柔和圆角 */
+  .input {
+    @apply w-full border border-warm-200 rounded-xl px-4 py-2.5
+           bg-warm-50/50
+           focus:ring-2 focus:ring-sky-300/50 focus:border-sky-400
+           outline-none transition-all duration-200
+           placeholder:text-warm-400;
+  }
+
+  /* 徽章 */
+  .badge { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium; }
+  .badge-blue { @apply badge bg-sky-100 text-sky-700; }
+  .badge-green { @apply badge bg-emerald-100 text-emerald-700; }
+  .badge-yellow { @apply badge bg-amber-100 text-amber-700; }
+  .badge-red { @apply badge bg-rose-100 text-rose-700; }
+  .badge-gray { @apply badge bg-warm-100 text-warm-600; }
+
+  /* 页面标题 */
+  .page-title {
+    @apply text-2xl font-bold text-warm-900 tracking-tight;
+  }
+
+  /* 表格 */
+  .table-header {
+    @apply px-4 py-3 text-left text-xs font-medium text-warm-500 uppercase tracking-wider
+           bg-warm-50/80 border-b border-warm-100;
+  }
+  .table-cell {
+    @apply px-4 py-3 text-sm text-warm-700 border-b border-warm-50;
+  }
+
+  /* Modal 弹窗 — 柔和入场动画 */
+  .modal-overlay {
+    @apply fixed inset-0 z-50 flex items-center justify-center
+           bg-warm-900/30 backdrop-blur-sm p-0 md:p-4
+           animate-fade-in;
+  }
+  .modal-content {
+    @apply bg-white md:rounded-3xl shadow-soft-xl
+           w-full h-full md:h-auto md:max-h-[90vh] flex flex-col
+           md:mx-4 md:max-w-2xl
+           animate-slide-up;
+  }
+
+  /* 标签页按钮 */
+  .tab-btn {
+    @apply px-5 py-2.5 rounded-xl text-sm font-medium transition-all duration-200;
+  }
+  .tab-btn-active {
+    @apply bg-white text-primary-700 shadow-soft;
+  }
+  .tab-btn-inactive {
+    @apply text-warm-500 hover:text-warm-700 hover:bg-warm-50;
+  }
+}
+
+/* ===== 云朵动画背景 ===== */
+.cloud-bg {
+  position: relative;
+  overflow: hidden;
+}
+.cloud-bg::before {
+  content: '';
+  position: absolute;
+  top: -20px;
+  left: -5%;
+  width: 200px;
+  height: 60px;
+  background: radial-gradient(ellipse at center, rgba(255,255,255,0.6) 0%, transparent 70%);
+  border-radius: 50%;
+  animation: cloudDrift 35s linear infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+.cloud-bg::after {
+  content: '';
+  position: absolute;
+  top: 30px;
+  left: -15%;
+  width: 140px;
+  height: 40px;
+  background: radial-gradient(ellipse at center, rgba(255,255,255,0.4) 0%, transparent 70%);
+  border-radius: 50%;
+  animation: cloudDrift 45s linear 12s infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ===== 天空渐变背景 ===== */
+.sky-gradient {
+  background: linear-gradient(180deg, #f0f6fb 0%, #dcebf5 30%, #faf8f5 70%, #f5f0e8 100%);
+}
+
+/* ===== 卡片悬浮光泽 ===== */
+.card-shine {
+  position: relative;
+  overflow: hidden;
+}
+.card-shine::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+  transform: skewX(-15deg);
+  transition: left 0.8s;
+}
+.card-shine:hover::after {
+  left: 120%;
+}
+
+/* ===== 过渡增强 ===== */
+.smooth-transition {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ===== 移动端安全区 ===== */
+.safe-area-bottom {
+  padding-bottom: calc(0.375rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* 移动端滚动优化 — 仅对可滚动容器生效，不给所有元素创建合成层 */
+.overflow-y-auto, .overflow-auto, .overflow-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 隐藏滚动条但保留滚动功能（移动端） */
+@media (max-width: 768px) {
+  ::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  /* 移动端禁用 cloud 动画和 backdrop-blur（省 GPU/电池） */
+  .cloud-bg::before,
+  .cloud-bg::after {
+    animation: none !important;
+    display: none;
+  }
+
+  /* backdrop-blur 降级 — 减少高斯模糊采样半径 */
+  .backdrop-blur-xl { backdrop-filter: blur(8px) !important; }
+  .backdrop-blur-lg { backdrop-filter: blur(4px) !important; }
+  .backdrop-blur-md { backdrop-filter: blur(2px) !important; }
+}

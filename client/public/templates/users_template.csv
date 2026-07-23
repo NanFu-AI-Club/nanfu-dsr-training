@@ -1,0 +1,5 @@
+username,real_name,password,role,phone,email,group_name
+zhangsan,张三,123456,sales,13800000001,zhangsan@nanfu.com,华东区销售一组
+lisi,李四,123456,sales,13800000002,lisi@nanfu.com,华东区销售一组
+wangwu,王五,123456,sales,13800000003,wangwu@nanfu.com,华东区销售一组
+zhaoliu,赵六,123456,sales,13800000004,zhaoliu@nanfu.com,
