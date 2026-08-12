@@ -18,14 +18,16 @@ function requireAdmin(req, res, next) {
 /**
  * 记录操作日志
  */
-function logActivity(db, userId, action, targetType, targetId, detail) {
+function logActivity(db, userId, action, targetType, targetId, detail, module = 'users', ip = null) {
   const id = uuidv4();
   const now = new Date().toISOString();
+  const detailStr = detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : null;
   db.prepare(
-    `INSERT INTO activity_logs (id, user_id, action, target_type, target_id, detail, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, userId, action, targetType, targetId, detail || null, now);
+    `INSERT INTO activity_logs (id, user_id, action, module, target_type, target_id, detail, ip, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, userId, action, module, targetType, targetId, detailStr, ip, now);
 }
+module.exports.logActivity = logActivity;
 
 // ============================================================
 // 用户 CRUD
@@ -42,6 +44,7 @@ function listUsers(req, res) {
     limit = 20,
     keyword = '',
     group_id = '',
+    role = '',
   } = req.query;
 
   const offset = (Number(page) - 1) * Number(limit);
@@ -60,6 +63,11 @@ function listUsers(req, res) {
     params.push(group_id);
   }
 
+  if (role) {
+    whereClauses.push('u.role = ?');
+    params.push(role);
+  }
+
   const whereSQL = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
 
   const countRow = db.prepare(
@@ -67,7 +75,7 @@ function listUsers(req, res) {
   ).get(...params);
 
   const rows = db.prepare(
-    `SELECT u.id, u.username, u.real_name, u.email, u.phone, u.role, u.points, u.group_id, u.status,
+    `SELECT u.id, u.username, u.real_name, u.email, u.phone, u.role, u.points, u.total_earned_points, u.group_id, u.status,
             g.name as group_name,
             u.created_at, u.updated_at
      FROM users u
@@ -94,7 +102,8 @@ function listUsers(req, res) {
  */
 function createUser(req, res) {
   const db = req.db;
-  const { username, name, password, email, phone, role, group_id } = req.body;
+  const { username, name, real_name, password, email, phone, role, group_id } = req.body;
+  const displayName = real_name || name || '';
 
   if (!username || !password) {
     return res.status(400).json({ code: 400, message: '用户名和密码为必填项' });
@@ -113,11 +122,11 @@ function createUser(req, res) {
   db.prepare(
     `INSERT INTO users (id, username, real_name, password, email, phone, role, group_id, points, status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, username, name || null, hashedPassword, email || null, phone || null,
+  ).run(id, username, displayName, hashedPassword, email || null, phone || null,
         role || 'sales', group_id || null, 0, 'active', now, now);
 
   logActivity(db, req.user.id, 'create', 'user', id,
-    `创建用户：${username}（${name || '未命名'}）`);
+    `创建用户：${username}（${displayName || '未命名'}）`);
 
   const user = db.prepare(
     `SELECT u.id, u.username, u.real_name, u.email, u.phone, u.role, u.points, u.group_id, u.status,
@@ -423,9 +432,14 @@ function adjustPoints(req, res) {
 
   const now = new Date().toISOString();
 
-  // 更新用户积分
-  db.prepare('UPDATE users SET points = ?, updated_at = ? WHERE id = ?')
-    .run(newPoints, now, id);
+  // 更新用户积分（正值同时增加累计积分）
+  if (changeAmount > 0) {
+    db.prepare('UPDATE users SET points = ?, total_earned_points = total_earned_points + ?, updated_at = ? WHERE id = ?')
+      .run(newPoints, changeAmount, now, id);
+  } else {
+    db.prepare('UPDATE users SET points = ?, updated_at = ? WHERE id = ?')
+      .run(newPoints, now, id);
+  }
 
   // 写入积分流水
   const logId = uuidv4();
@@ -467,7 +481,11 @@ function getPointLogs(req, res) {
   ).get(id);
 
   const rows = db.prepare(
-    `SELECT pl.*
+    `SELECT pl.*,
+            CASE WHEN pl.source_type = 'manual_adjust'
+                 THEN (SELECT u2.real_name FROM users u2 WHERE u2.id = pl.source_id)
+                 ELSE NULL
+            END as operator_name
      FROM point_logs pl
      WHERE pl.user_id = ?
      ORDER BY pl.created_at DESC
@@ -512,6 +530,25 @@ router.get('/groups', listGroups);
 router.post('/groups', createGroup);
 router.put('/groups/:id', updateGroup);
 router.delete('/groups/:id', deleteGroup);
+
+// 批量删除
+router.post('/batch-delete', (req, res) => {
+  const db = req.db;
+  const { ids } = req.body;
+  if (!ids || !Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ code: 400, message: '请提供要删除的用户ID列表' });
+  }
+  let deleted = 0;
+  for (const id of ids) {
+    const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    if (existing && String(existing.id) !== String(req.user.id)) {
+      db.prepare('DELETE FROM users WHERE id = ?').run(id);
+      logActivity(db, req.user.id, 'batch_delete', 'user', id, `批量删除用户：${existing.username}`);
+      deleted++;
+    }
+  }
+  res.json({ code: 0, data: { deleted, total: ids.length } });
+});
 
 module.exports = router;
 module.exports.logActivity = logActivity;

@@ -4,6 +4,7 @@
  *     training_sessions, training_reports, training_messages, point_logs, activity_logs, groups
  */
 const express = require('express');
+const { getLevelInfo } = require('../utils/levels');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { authRequired, adminRequired } = require('../middleware/auth');
@@ -27,10 +28,14 @@ router.get('/overview', authRequired, (req, res) => {
     const userId = req.user.id;
 
     // 当前用户信息（积分）
-    const user = db.prepare('SELECT id, real_name, points, group_id FROM users WHERE id = ?').get(userId);
+    const user = db.prepare('SELECT id, real_name, points, total_earned_points, group_id FROM users WHERE id = ?').get(userId);
 
     // 总积分
     const totalPoints = user.points || 0;
+    const totalEarned = user.total_earned_points || 0;
+
+    // 称号等级
+    const levelInfo = getLevelInfo(totalEarned);
 
     // 完成课程数
     const completedCourses = db.prepare(`
@@ -71,6 +76,8 @@ router.get('/overview', authRequired, (req, res) => {
       code: 0,
       data: {
         total_points: totalPoints,
+        total_earned_points: totalEarned,
+        level: levelInfo,
         completed_courses: completedCourses,
         total_courses: totalCourses,
         course_completion_rate: totalCourses > 0 ? Math.round((completedCourses / totalCourses) * 100) : 0,
@@ -356,43 +363,38 @@ router.get('/ranking', authRequired, (req, res) => {
  * 计算指定用户的雷达图六维数据（合并查询版，一次 SQL 出全部结果）
  */
 function calculateRadarData(db, userId) {
-  // 合并查询：一次性获取所有统计数据
+  // 合并查询：一次性获取所有统计数据（sql.js 用 ? 位置参数，不能用 @uid 命名参数）
   const stats = db.prepare(`
     SELECT
       -- 产品考试平均分
       (SELECT ROUND(AVG(er.score), 1) FROM exam_records er JOIN exams e ON er.exam_id = e.id
-       WHERE er.user_id = @uid AND er.status IN ('submitted','graded')
+       WHERE er.user_id = ? AND er.status IN ('submitted','graded')
        AND EXISTS (SELECT 1 FROM exam_questions eq JOIN questions q ON eq.question_id = q.id
        WHERE eq.exam_id = e.id AND (q.category LIKE '%产品%' OR q.category LIKE '%product%'))) as product_exam_score,
       -- 产品课程总数
       (SELECT COUNT(*) FROM courses WHERE status = 'published' AND (category LIKE '%产品%' OR category LIKE '%product%')) as total_product_courses,
       -- 完成产品课程数
       (SELECT COUNT(*) FROM learning_progress lp JOIN courses c ON lp.course_id = c.id
-       WHERE lp.user_id = @uid AND lp.completed = 1 AND (c.category LIKE '%产品%' OR c.category LIKE '%product%')) as completed_product_courses,
+       WHERE lp.user_id = ? AND lp.completed = 1 AND (c.category LIKE '%产品%' OR c.category LIKE '%product%')) as completed_product_courses,
       -- 销售考试平均分
       (SELECT ROUND(AVG(er.score), 1) FROM exam_records er JOIN exams e ON er.exam_id = e.id
-       WHERE er.user_id = @uid AND er.status IN ('submitted','graded')
+       WHERE er.user_id = ? AND er.status IN ('submitted','graded')
        AND EXISTS (SELECT 1 FROM exam_questions eq JOIN questions q ON eq.question_id = q.id
        WHERE eq.exam_id = e.id AND (q.category LIKE '%销售%' OR q.category LIKE '%sales%'))) as sales_exam_score,
       -- 销售课程总数
       (SELECT COUNT(*) FROM courses WHERE status = 'published' AND (category LIKE '%销售%' OR category LIKE '%sales%')) as total_sales_courses,
       -- 完成销售课程数
       (SELECT COUNT(*) FROM learning_progress lp JOIN courses c ON lp.course_id = c.id
-       WHERE lp.user_id = @uid AND lp.completed = 1 AND (c.category LIKE '%销售%' OR c.category LIKE '%sales%')) as completed_sales_courses,
+       WHERE lp.user_id = ? AND lp.completed = 1 AND (c.category LIKE '%销售%' OR c.category LIKE '%sales%')) as completed_sales_courses,
       -- 陪练平均分
-      (SELECT ROUND(AVG(tr.total_score), 1) FROM training_reports tr WHERE tr.user_id = @uid) as training_avg_score,
-      -- 制度考试平均分
-      (SELECT ROUND(AVG(er.score), 1) FROM exam_records er JOIN exams e ON er.exam_id = e.id
-       WHERE er.user_id = @uid AND er.status IN ('submitted','graded')
-       AND EXISTS (SELECT 1 FROM exam_questions eq JOIN questions q ON eq.question_id = q.id
-       WHERE eq.exam_id = e.id AND (q.category LIKE '%制度%' OR q.category LIKE '%公司%'))) as policy_exam_score,
+      (SELECT ROUND(AVG(tr.total_score), 1) FROM training_reports tr WHERE tr.user_id = ?) as training_avg_score,
       -- 全部完成课程数
-      (SELECT COUNT(*) FROM learning_progress WHERE user_id = @uid AND completed = 1) as all_completed_courses,
+      (SELECT COUNT(*) FROM learning_progress WHERE user_id = ? AND completed = 1) as all_completed_courses,
       -- 全部课程数
       (SELECT COUNT(*) FROM courses WHERE status = 'published') as all_total_courses,
       -- 总学习时长（秒）
-      (SELECT COALESCE(SUM(lp.watch_time), 0) FROM learning_progress lp WHERE lp.user_id = @uid) as total_watch_time
-  `).get({ uid: userId });
+      (SELECT COALESCE(SUM(lp.watch_time), 0) FROM learning_progress lp WHERE lp.user_id = ?) as total_watch_time
+  `).get(userId, userId, userId, userId, userId, userId, userId);
 
   const productExamScore = stats.product_exam_score || 0;
   const totalProductCourses = stats.total_product_courses || 0;
@@ -401,7 +403,6 @@ function calculateRadarData(db, userId) {
   const totalSalesCourses = stats.total_sales_courses || 0;
   const completedSalesCourses = stats.completed_sales_courses || 0;
   const trainingAvgScore = stats.training_avg_score || 0;
-  const policyExamScore = stats.policy_exam_score || 0;
   const allCompletedCourses = stats.all_completed_courses || 0;
   const allTotalCourses = stats.all_total_courses || 0;
   const totalWatchTime = stats.total_watch_time || 0;
@@ -413,7 +414,7 @@ function calculateRadarData(db, userId) {
   const salesSkill = Math.round((salesExamScore * 0.3) + (salesCourseRate * 0.3) + (trainingAvgScore * 0.4));
   const commScore = calculateTrainingDimensionAvg(db, userId, '沟通表达', 60);
   const customerScore = calculateTrainingDimensionAvg(db, userId, '客户关系', 55);
-  const policyUnderstanding = Math.round(policyExamScore);
+  const customerCareScore = calculateTrainingDimensionAvg(db, userId, '客情维护', 50);
   const overallCourseRate = allTotalCourses > 0 ? (allCompletedCourses / allTotalCourses) * 100 : 0;
   const totalHours = Math.round(totalWatchTime / 3600 * 10) / 10;
   const timeScore = Math.min(100, Math.round((totalHours / 20) * 100));
@@ -424,8 +425,8 @@ function calculateRadarData(db, userId) {
     { name: '销售技巧', score: clamp(salesSkill, 0, 100), fullMark: 100 },
     { name: '沟通能力', score: clamp(commScore, 0, 100), fullMark: 100 },
     { name: '客户管理', score: clamp(customerScore, 0, 100), fullMark: 100 },
-    { name: '制度理解', score: clamp(policyUnderstanding, 0, 100), fullMark: 100 },
-    { name: '学习态度', score: clamp(learningAttitude, 0, 100), fullMark: 100 }
+    { name: '客情维护', score: clamp(customerCareScore, 0, 100), fullMark: 100 },
+    { name: '学习时长', score: clamp(learningAttitude, 0, 100), fullMark: 100 }
   ];
 
   const detail = {
@@ -444,7 +445,7 @@ function calculateRadarData(db, userId) {
     },
     communication: { training_dimension_avg: commScore },
     customer_management: { training_dimension_avg: customerScore },
-    policy_understanding: { exam_avg_score: policyExamScore },
+    customer_care: { training_dimension_avg: customerCareScore },
     learning_attitude: {
       course_completion_rate: Math.round(overallCourseRate),
       total_watch_hours: totalHours,
@@ -579,6 +580,7 @@ router.get('/point-details', authRequired, (req, res) => {
       exam: '考试通过',
       training: 'AI陪练',
       manual_adjust: '管理员调整',
+      check_in: '每日签到',
     };
 
     const list = logs.map(log => ({
@@ -706,7 +708,7 @@ router.get('/user-profile/:userId', authRequired, adminRequired, (req, res) => {
 
     // 用户基本信息
     const user = db.prepare(`
-      SELECT u.id, u.username, u.real_name, u.role, u.phone, u.email, u.points,
+      SELECT u.id, u.username, u.real_name, u.role, u.phone, u.email, u.points, u.total_earned_points,
              u.created_at, g.name as group_name
       FROM users u LEFT JOIN groups g ON u.group_id = g.id
       WHERE u.id = ?
@@ -735,6 +737,8 @@ router.get('/user-profile/:userId', authRequired, adminRequired, (req, res) => {
         SELECT COUNT(*) as c FROM training_sessions WHERE user_id = ? AND status = 'completed'
       `).get(userId).c,
       total_points: user.points || 0,
+      total_earned_points: user.total_earned_points || 0,
+      level: getLevelInfo(user.total_earned_points || 0),
       total_watch_hours: Math.round(
         (db.prepare("SELECT COALESCE(SUM(watch_time),0) as t FROM learning_progress WHERE user_id=?").get(userId).t / 3600) * 10
       ) / 10,

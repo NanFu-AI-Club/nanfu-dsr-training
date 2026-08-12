@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Award, Zap, BookOpen, FileText, MessageSquare, Users, Star, Save, Loader2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Award, Zap, BookOpen, FileText, MessageSquare, Users, Star, Save, Loader2, ToggleLeft, ToggleRight, CalendarDays, Flame, Crown, Camera } from 'lucide-react';
 import api from '../../api';
 
 const ICON_MAP = {
@@ -9,6 +9,11 @@ const ICON_MAP = {
   message: MessageSquare,
   user: Users,
   star: Star,
+  calendar: CalendarDays,
+  flame: Flame,
+  fire: Flame,
+  crown: Crown,
+  camera: Camera,
 };
 
 export default function PointRules() {
@@ -155,10 +160,10 @@ export default function PointRules() {
         </h3>
         <div className="space-y-3 text-sm text-warm-600">
           <div className="flex items-start gap-3 p-3 bg-warm-50/80 rounded-xl">
-            <Zap size={16} className="text-amber-500 mt-0.5 shrink-0" />
+            <CalendarDays size={16} className="text-amber-500 mt-0.5 shrink-0" />
             <div>
-              <p className="font-medium text-warm-800">每日一题</p>
-              <p className="text-warm-500 text-xs mt-0.5">每天登录自动弹出一道随机题目。答对和答错分别按规则获得不同积分，每天只能答一次。</p>
+              <p className="font-medium text-warm-800">每日签到</p>
+              <p className="text-warm-500 text-xs mt-0.5">每天签到获得基础积分。连续签到3/7/30天分别获得额外奖励。签到日历可查看记录。</p>
             </div>
           </div>
           <div className="flex items-start gap-3 p-3 bg-warm-50/80 rounded-xl">

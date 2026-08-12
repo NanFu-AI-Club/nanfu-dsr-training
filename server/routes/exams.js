@@ -4,6 +4,7 @@
  */
 const express = require('express');
 const router = express.Router();
+const { saveDb } = require('../database');
 const { v4: uuidv4 } = require('uuid');
 const { authRequired, adminRequired } = require('../middleware/auth');
 
@@ -73,15 +74,25 @@ function isUserAssigned(db, exam, userId) {
  * - multiple: JSON 数组排序后对比
  */
 function gradeAnswer(questionType, correctAnswer, userAnswer) {
+  // 先尝试解析JSON（数据库中可能存为JSON字符串）
+  let parsedCorrect;
+  try { parsedCorrect = JSON.parse(correctAnswer); } catch (_) { parsedCorrect = correctAnswer; }
+  
   if (questionType === 'single' || questionType === 'judge') {
-    return String(userAnswer).trim().toUpperCase() === String(correctAnswer).trim().toUpperCase();
+    const correct = String(parsedCorrect).trim().toUpperCase();
+    const user = String(userAnswer).trim().toUpperCase();
+    return correct === user;
   }
   if (questionType === 'multiple') {
     let correctArr;
-    try { correctArr = JSON.parse(correctAnswer); } catch (_) { correctArr = String(correctAnswer).split(',').map(s => s.trim()); }
+    if (Array.isArray(parsedCorrect)) {
+      correctArr = parsedCorrect;
+    } else {
+      try { correctArr = JSON.parse(parsedCorrect); } catch (_) { correctArr = String(parsedCorrect).split(',').map(s => s.trim()); }
+    }
     const userArr = Array.isArray(userAnswer) ? userAnswer : String(userAnswer).split(',').map(s => s.trim());
-    const sortedCorrect = [...correctArr].sort().join(',');
-    const sortedUser = [...userArr].sort().join(',');
+    const sortedCorrect = [...correctArr].sort().map(String).join(',').toUpperCase();
+    const sortedUser = [...userArr].sort().map(String).join(',').toUpperCase();
     return sortedCorrect === sortedUser;
   }
   return false;
@@ -110,35 +121,33 @@ router.get('/pending', authRequired, (req, res) => {
       // 检查分配
       if (!isUserAssigned(db, exam, userId)) continue;
 
-      // 检查 max_attempts：已完成的提交次数
-      const completedCount = db.prepare(`
-        SELECT COUNT(*) as count FROM exam_records
-        WHERE exam_id = ? AND user_id = ? AND status IN ('submitted', 'graded')
-      `).get(exam.id, userId).count;
+      // 查询该用户对该考试的所有记录
+      const records = db.prepare(`
+        SELECT * FROM exam_records
+        WHERE exam_id = ? AND user_id = ?
+        ORDER BY created_at DESC
+      `).all(exam.id, userId);
 
-      // 如果有 retake 授权记录且已提交次数 < 授权次数，允许再考
-      const retakeRecords = db.prepare(`
-        SELECT COUNT(*) as count FROM exam_records
-        WHERE exam_id = ? AND user_id = ? AND retake_authorized = 1
-      `).get(exam.id, userId).count;
+      // 已通过的记录
+      const passedRecord = records.find(r => r.passed === 1 && (r.status === 'submitted' || r.status === 'graded'));
 
-      // 没有记录，或已完成次数 < max_attempts，或已授权retake且已完成次数 < 授权次数
-      if (completedCount === 0 || completedCount < exam.max_attempts || completedCount < retakeRecords) {
-        // 排除当前正在进行的考试（已有 ongoing 状态的记录）
-        const ongoingRecord = db.prepare(`
-          SELECT id FROM exam_records
-          WHERE exam_id = ? AND user_id = ? AND status = 'ongoing'
-        `).get(exam.id, userId);
+      // 如果已通过，不显示在待考列表（已经通过了）
+      if (passedRecord) continue;
 
-        pending.push({
-          ...exam,
-          assign_targets: exam.assign_targets ? JSON.parse(exam.assign_targets) : null,
-          completed_attempts: completedCount,
-          remaining_attempts: Math.max(0, exam.max_attempts + retakeRecords - completedCount),
-          has_ongoing: !!ongoingRecord,
-          ongoing_record_id: ongoingRecord ? ongoingRecord.id : null
-        });
-      }
+      // 未通过：可以反复考，直到及格
+      const completedCount = records.filter(r => r.status === 'submitted' || r.status === 'graded').length;
+
+      // 是否有正在进行的考试
+      const ongoingRecord = records.find(r => r.status === 'ongoing');
+
+      pending.push({
+        ...exam,
+        assign_targets: exam.assign_targets ? JSON.parse(exam.assign_targets) : null,
+        completed_attempts: completedCount,
+        remaining_attempts: 999, // 不限次数，直到及格
+        has_ongoing: !!ongoingRecord,
+        ongoing_record_id: ongoingRecord ? ongoingRecord.id : null
+      });
     }
 
     res.json({ code: 0, data: { list: pending, total: pending.length } });
@@ -325,6 +334,37 @@ router.post('/', authRequired, adminRequired, (req, res) => {
     res.json({ code: 0, message: '考试创建成功', data: { id } });
   } catch (err) {
     console.error('[exams/create] Error:', err);
+    res.status(500).json({ code: 500, message: '服务器内部错误' });
+  }
+});
+
+// ==================== GET /exams/my-all-records - 我的所有考试记录（必须在 /:id 之前） ====================
+router.get('/my-all-records', authRequired, (req, res) => {
+  try {
+    const db = req.db;
+    const userId = req.user.id;
+
+    const records = db.prepare(`
+      SELECT er.*, e.title as exam_title, e.total_score as exam_total_score, e.pass_score as exam_pass_score
+      FROM exam_records er
+      JOIN exams e ON er.exam_id = e.id
+      WHERE er.user_id = ? AND er.status IN ('submitted', 'graded')
+      ORDER BY er.created_at DESC
+    `).all(userId);
+
+    const data = records.map(r => {
+      let answers = [];
+      try { answers = JSON.parse(r.answers || '[]'); } catch (_) { answers = []; }
+      return {
+        ...r,
+        answers,
+        passed: r.passed === 1
+      };
+    });
+
+    res.json({ code: 0, data: { records: data } });
+  } catch (err) {
+    console.error('[exams/my-all-records] Error:', err);
     res.status(500).json({ code: 500, message: '服务器内部错误' });
   }
 });
@@ -622,29 +662,13 @@ router.post('/:id/start', authRequired, (req, res) => {
       return res.status(403).json({ code: 403, message: '您未被分配参加该考试' });
     }
 
-    // attempt 检查
-    // 已完成（submitted/graded）的次数
-    const completedCount = db.prepare(`
-      SELECT COUNT(*) as count FROM exam_records
-      WHERE exam_id = ? AND user_id = ? AND status IN ('submitted', 'graded')
-    `).get(id, userId).count;
-
-    // 已授权 retake 的次数
-    const retakeAuthorizedCount = db.prepare(`
-      SELECT COUNT(*) as count FROM exam_records
-      WHERE exam_id = ? AND user_id = ? AND retake_authorized = 1
-    `).get(id, userId).count;
-
-    // 有效 completed（未通过 retake 抵消的）
-    const effectiveCompleted = Math.max(0, completedCount - retakeAuthorizedCount);
-
-    // 计算剩余可用次数：max_attempts - 有效已完成次数 + retake 授权次数
-    const remaining = exam.max_attempts - effectiveCompleted + retakeAuthorizedCount - (effectiveCompleted > 0 && retakeAuthorizedCount > 0 ? 0 : 0);
-
-    // 简化为：total allowed = max_attempts + retakeAuthorizedCount
-    // 如果 completedCount >= max_attempts + retakeAuthorizedCount，则不允许
-    if (completedCount >= exam.max_attempts + retakeAuthorizedCount) {
-      return res.status(400).json({ code: 400, message: '已达到最大考试次数' });
+    // 检查是否已通过（已通过不能再考）
+    const passedRecord = db.prepare(`
+      SELECT id FROM exam_records
+      WHERE exam_id = ? AND user_id = ? AND passed = 1 AND status IN ('submitted', 'graded')
+    `).get(id, userId);
+    if (passedRecord) {
+      return res.status(400).json({ code: 400, message: '您已通过该考试，无需再考' });
     }
 
     // 检查是否有正在进行的考试
@@ -659,6 +683,12 @@ router.post('/:id/start', authRequired, (req, res) => {
         data: { record_id: ongoing.id, exam_title: exam.title, duration: exam.duration }
       });
     }
+
+    // 未通过，可以再考（不限次数）
+    const completedCount = db.prepare(`
+      SELECT COUNT(*) as count FROM exam_records
+      WHERE exam_id = ? AND user_id = ? AND status IN ('submitted', 'graded')
+    `).get(id, userId).count;
 
     const attempt = completedCount + 1;
     const recordId = uuidv4();
@@ -768,10 +798,24 @@ router.get('/paper/:id', authRequired, (req, res) => {
       }
     }
 
-    // 打乱选项顺序
+    // 打乱选项顺序，并规范化选项格式
     const result = questions.map(q => {
       let options = [];
       try { options = JSON.parse(q.options || '[]'); } catch (_) { options = []; }
+      
+      // 规范化选项格式：支持字符串数组 ["A.选项内容", "B.选项内容"] 和对象数组 [{value, label}]
+      options = options.map((opt, idx) => {
+        if (typeof opt === 'string') {
+          // 解析 "A.选项内容" 格式
+          const match = opt.match(/^([A-D])[.．、:：]\s*(.+)$/i);
+          if (match) {
+            return { value: match[1].toUpperCase(), label: opt, text: match[2] };
+          }
+          return { value: String.fromCharCode(65 + idx), label: opt, text: opt };
+        }
+        return opt; // 已经是对象格式
+      });
+      
       if (exam.shuffle_options && options.length > 0) {
         for (let i = options.length - 1; i > 0; i--) {
           const j = Math.floor(Math.random() * (i + 1));
@@ -867,17 +911,26 @@ router.post('/:id/submit', authRequired, (req, res) => {
       WHERE id = ?
     `).run(JSON.stringify(gradedAnswers), totalScore, passed, record_id);
 
-    // 如果本次提交通过了考试，给予积分奖励
-    if (passed === 1) {
-      const earnedPoints = Math.floor(totalScore / 10);
-      if (earnedPoints > 0) {
-        const pointLogId = uuidv4();
-        db.prepare(`
-          INSERT INTO point_logs (id, user_id, points, reason, source_type, source_id)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).run(pointLogId, userId, earnedPoints, `考试通过: ${exam.title}`, 'exam', id);
+    // 立即保存数据库，防止数据丢失
+    saveDb(true);
 
-        db.prepare('UPDATE users SET points = points + ? WHERE id = ?').run(earnedPoints, userId);
+    // 如果本次提交通过了考试，给予积分奖励（同一考试只发一次）
+    if (passed === 1) {
+      // 幂等检查：查 point_logs 是否已为该考试发过积分
+      const alreadyAwarded = db.prepare(
+        `SELECT id FROM point_logs WHERE user_id = ? AND source_type = 'exam' AND source_id = ?`
+      ).get(userId, id);
+      if (!alreadyAwarded) {
+        const earnedPoints = Math.floor(totalScore / 10);
+        if (earnedPoints > 0) {
+          const pointLogId = uuidv4();
+          db.prepare(`
+            INSERT INTO point_logs (id, user_id, points, reason, source_type, source_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(pointLogId, userId, earnedPoints, `考试通过: ${exam.title}`, 'exam', id);
+
+          db.prepare('UPDATE users SET points = points + ?, total_earned_points = total_earned_points + ? WHERE id = ?').run(earnedPoints, earnedPoints, userId);
+        }
       }
     }
 
@@ -966,6 +1019,90 @@ router.get('/:id/records', authRequired, adminRequired, (req, res) => {
   } catch (err) {
     console.error('[exams/records] Error:', err);
     res.status(500).json({ code: 500, message: '服务器内部错误' });
+  }
+});
+
+// ==================== GET /exams/:id/records/export - 导出考试记录为 Excel（admin） ====================
+
+router.get('/:id/records/export', authRequired, adminRequired, (req, res) => {
+  try {
+    const db = req.db;
+    const { id } = req.params;
+
+    const exam = db.prepare('SELECT * FROM exams WHERE id = ?').get(id);
+    if (!exam) {
+      return res.status(404).json({ code: 404, message: '考试不存在' });
+    }
+
+    // 获取所有考生记录（不分页）
+    const records = db.prepare(`
+      SELECT er.*, u.real_name, u.username, u.group_id, g.name as group_name
+      FROM exam_records er
+      JOIN users u ON er.user_id = u.id
+      LEFT JOIN groups g ON u.group_id = g.id
+      WHERE er.exam_id = ?
+      ORDER BY er.created_at DESC
+    `).all(id);
+
+    // 使用 xlsx 生成 Excel
+    const XLSX = require('xlsx');
+
+    // 准备数据
+    const data = records.map((r, idx) => {
+      const duration = r.duration != null ? `${Math.floor(r.duration / 60)}分${r.duration % 60}秒` : '-';
+      const statusMap = {
+        'ongoing': '进行中',
+        'submitted': '已提交',
+        'graded': '已批阅'
+      };
+      return {
+        '序号': idx + 1,
+        '姓名': r.real_name || r.username || r.user_id,
+        '分组': r.group_name || '-',
+        '分数': r.score ?? '-',
+        '是否通过': r.passed === 1 ? '通过' : '未通过',
+        '状态': statusMap[r.status] || r.status,
+        '用时': duration,
+        '考试时间': r.start_time ? r.start_time.replace('T', ' ').slice(0, 19) : '-',
+        '提交时间': r.end_time ? r.end_time.replace('T', ' ').slice(0, 19) : '-',
+      };
+    });
+
+    // 创建工作簿
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(data);
+
+    // 设置列宽
+    ws['!cols'] = [
+      { wch: 6 },   // 序号
+      { wch: 12 },  // 姓名
+      { wch: 12 },  // 分组
+      { wch: 8 },   // 分数
+      { wch: 10 },  // 是否通过
+      { wch: 10 },  // 状态
+      { wch: 12 },  // 用时
+      { wch: 20 },  // 考试时间
+      { wch: 20 },  // 提交时间
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, '考试记录');
+
+    // 生成文件名
+    const filename = `${exam.title}_考试记录_${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+    // 设置响应头
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+
+    // 发送文件
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.send(buf);
+
+    logActivity(db, req.user.id, 'export', 'exam_records', id,
+      { exam_title: exam.title, record_count: records.length }, req.ip);
+  } catch (err) {
+    console.error('[exams/records/export] Error:', err);
+    res.status(500).json({ code: 500, message: '导出失败' });
   }
 });
 

@@ -89,7 +89,7 @@ function VersionHistory({ docId, onClose, onRollback }) {
               </div>
               {!v.is_current && (
                 <button
-                  onClick={() => onRollback(docId, v.version)}
+                  onClick={() => onRollback(docId, v.id)}
                   className="text-primary-600 hover:text-primary-800 flex items-center gap-1"
                 >
                   <RotateCcw size={12} /> 回滚
@@ -150,7 +150,7 @@ export default function Knowledge() {
     try {
       let res;
       if (keyword) {
-        res = await api.get('/knowledge/search', { params: { keyword, category_id: categoryId || undefined } });
+        res = await api.post('/knowledge/search', { keyword, category_id: categoryId || undefined });
       } else {
         res = await api.get('/knowledge/documents', { params: { category_id: categoryId || undefined } });
       }
@@ -238,10 +238,10 @@ export default function Knowledge() {
       console.error('删除文档失败:', err);
     }
   };
-  const rollbackVersion = async (docId, version) => {
-    if (!window.confirm(`确定回滚到 v${version}？`)) return;
+  const rollbackVersion = async (docId, versionId) => {
+    if (!window.confirm(`确定回滚到该版本？`)) return;
     try {
-      await api.post(`/knowledge/documents/${docId}/rollback`, { version });
+      await api.post(`/knowledge/documents/${docId}/rollback/${versionId}`);
       setExpandedDocId(null);
       fetchDocuments(selectedCategory?.id, docSearch);
     } catch (err) {
@@ -256,6 +256,39 @@ export default function Knowledge() {
     link.href = '/templates/knowledge_template.csv';
     link.download = '知识库导入模板.csv';
     link.click();
+  };
+
+  // Excel 文件上传处理
+  const handleExcelFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    setImporting(true);
+    setImportProgress({ current: 0, total: 1 });
+    
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const res = await api.post('/knowledge/import-excel', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      
+      const data = res?.data || res;
+      alert(`导入成功！文件：${data?.data?.category || file.name}\n共导入 ${data?.data?.inserted || 0} 条记录`);
+      
+      // 刷新列表
+      fetchCategories();
+      fetchDocuments(selectedCategory?.id, docSearch);
+    } catch (err) {
+      console.error('Excel导入失败:', err);
+      const msg = err?.response?.data?.message || err?.message || '导入失败';
+      alert('导入失败: ' + msg);
+    } finally {
+      setImporting(false);
+      setImportProgress(null);
+      e.target.value = ''; // 清空文件选择
+    }
   };
 
   const parseCSVLine = (line) => {
@@ -611,31 +644,56 @@ export default function Knowledge() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => { if (!importing) { setBatchImportOpen(false); setCsvAllData([]); setCsvFileName(''); setImportProgress(null); } }}>
           <div className="bg-white rounded-xl shadow-soft-xl p-6 w-full max-w-3xl max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">批量导入文档</h3>
+              <h3 className="text-lg font-semibold">批量导入知识库</h3>
               <button onClick={() => { if (!importing) { setBatchImportOpen(false); setCsvAllData([]); setCsvFileName(''); setImportProgress(null); } }} className="text-warm-400 hover:text-warm-600"><X size={20} /></button>
             </div>
 
             <div className="space-y-4">
-              {/* 下载模板 */}
-              <div className="flex items-center gap-3">
-                <button onClick={downloadTemplate} className="btn-secondary flex items-center gap-1.5 text-sm">
-                  <FileText size={14} /> 下载模板
-                </button>
-                <span className="text-xs text-warm-400">下载 CSV 模板文件，按格式填写后上传</span>
-              </div>
-
-              {/* 文件上传 */}
-              <div>
-                <label className="block text-sm font-medium text-warm-700 mb-1">选择 CSV 文件</label>
+              {/* Excel 导入 */}
+              <div className="bg-primary-50/50 border border-primary-100 rounded-xl p-4">
+                <h4 className="text-sm font-semibold text-primary-700 mb-2">推荐：Excel 智能导入</h4>
+                <p className="text-xs text-primary-600 mb-3">
+                  上传 Excel 文件（.xlsx），系统自动解析表头并智能提取内容。支持多种格式：
+                  <span className="font-medium">话术三板斧、品类卖点速查表、销售实战方法论、DSR难题百问</span> 等。
+                </p>
                 <input
                   type="file"
-                  accept=".csv"
-                  onChange={handleCSVFile}
+                  accept=".xlsx,.xls"
+                  onChange={handleExcelFile}
                   disabled={importing}
-                  className="block w-full text-sm text-warm-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-medium file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100"
+                  className="block w-full text-sm text-warm-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-medium file:bg-primary-100 file:text-primary-700 hover:file:bg-primary-200"
                 />
-                {csvFileName && <p className="text-xs text-warm-500 mt-1">已选择: {csvFileName}（共 {csvAllData.length} 条数据）</p>}
               </div>
+
+              <div className="flex items-center gap-3 text-xs text-warm-400">
+                <div className="flex-1 h-px bg-warm-200" />
+                <span>或者使用 CSV 手动导入</span>
+                <div className="flex-1 h-px bg-warm-200" />
+              </div>
+
+              {/* CSV 导入 */}
+              <>
+                {/* 下载模板 */}
+                <div className="flex items-center gap-3">
+                  <button onClick={downloadTemplate} className="btn-secondary flex items-center gap-1.5 text-sm">
+                    <FileText size={14} /> 下载CSV模板
+                  </button>
+                  <span className="text-xs text-warm-400">下载 CSV 模板文件，按格式填写后上传</span>
+                </div>
+
+                {/* CSV 文件上传 */}
+                <div>
+                  <label className="block text-sm font-medium text-warm-700 mb-1">选择 CSV 文件</label>
+                  <input
+                    type="file"
+                    accept=".csv"
+                    onChange={handleCSVFile}
+                    disabled={importing}
+                    className="block w-full text-sm text-warm-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-medium file:bg-warm-50 file:text-warm-700 hover:file:bg-warm-100"
+                  />
+                  {csvFileName && <p className="text-xs text-warm-500 mt-1">已选择: {csvFileName}（共 {csvAllData.length} 条数据）</p>}
+                </div>
+              </>
 
               {/* 预览表格 */}
               {csvAllData.length > 0 && (
@@ -686,23 +744,25 @@ export default function Knowledge() {
                 </div>
               )}
 
-              {/* 操作按钮 */}
-              <div className="flex gap-3 justify-end pt-2">
-                <button
-                  onClick={() => { setBatchImportOpen(false); setCsvAllData([]); setCsvFileName(''); setImportProgress(null); }}
-                  className="btn-secondary"
-                  disabled={importing}
-                >
-                  取消
-                </button>
-                <button
-                  onClick={handleBatchImport}
-                  className="btn-primary flex items-center gap-1.5"
-                  disabled={csvAllData.length === 0 || importing}
-                >
-                  <Upload size={16} /> 导入
-                </button>
-              </div>
+              {/* CSV 导入按钮 */}
+              {csvAllData.length > 0 && (
+                <div className="flex gap-3 justify-end pt-2">
+                  <button
+                    onClick={() => { setBatchImportOpen(false); setCsvAllData([]); setCsvFileName(''); setImportProgress(null); }}
+                    className="btn-secondary"
+                    disabled={importing}
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleBatchImport}
+                    className="btn-primary flex items-center gap-1.5"
+                    disabled={csvAllData.length === 0 || importing}
+                  >
+                    <Upload size={16} /> 导入 CSV
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

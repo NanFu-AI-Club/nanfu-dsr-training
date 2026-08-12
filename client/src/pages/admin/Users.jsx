@@ -1,21 +1,36 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Search, Plus, Edit3, X, Users as UsersIcon, Settings, Coins, History, Phone, Mail, Eye, Download, Upload, FileSpreadsheet,
+  Search, Plus, Edit3, X, Users as UsersIcon, Settings, Coins, History, Phone, Mail, Eye, Download, Upload, FileSpreadsheet, Trash2, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import api from '../../api';
+
+/* ========== 等级/称号配置 ========== */
+const LEVELS = [
+  { level: 1, title: '江湖跑侠', min: 0, max: 199, color: 'text-stone-500', bg: 'bg-stone-100', desc: '初闯终端江湖，开启跑店历练' },
+  { level: 2, title: '拓店游侠', min: 200, max: 499, color: 'text-emerald-600', bg: 'bg-emerald-50', desc: '奔走各大门店，拓店小有收获' },
+  { level: 3, title: '终端先锋', min: 500, max: 999, color: 'text-blue-600', bg: 'bg-blue-50', desc: '熟稔门店谈判，终端得心应手' },
+  { level: 4, title: '销冠大咖', min: 1000, max: 1999, color: 'text-purple-600', bg: 'bg-purple-50', desc: '实战战绩突出，团队中坚力量' },
+  { level: 5, title: '城市英雄', min: 2000, max: Infinity, color: 'text-amber-500', bg: 'bg-amber-50', desc: '一线顶尖标杆，众人学习榜样' },
+];
+
+function getLevelInfo(totalEarnedPoints) {
+  const pts = totalEarnedPoints || 0;
+  const current = LEVELS.find(l => pts >= l.min && pts <= l.max) || LEVELS[0];
+  return current;
+}
 
 /* ================= 用户弹窗表单 ================= */
 function UserModal({ open, onClose, onSave, form, setForm, groups, editingId }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-soft-xl p-6 w-full max-w-lg max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-soft-xl p-4 md:p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold">{editingId ? '编辑用户' : '新建用户'}</h3>
           <button onClick={onClose} className="text-warm-400 hover:text-warm-600"><X size={20} /></button>
         </div>
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-warm-700 mb-1">用户名 *</label>
               <input className="input" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder="登录用户名" />
@@ -29,7 +44,7 @@ function UserModal({ open, onClose, onSave, form, setForm, groups, editingId }) 
             <label className="block text-sm font-medium text-warm-700 mb-1">密码{editingId ? '（留空则不修改）' : ' *'}</label>
             <input className="input" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder={editingId ? '留空则不修改密码' : '输入密码'} />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-warm-700 mb-1">角色 *</label>
               <select className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
@@ -48,7 +63,7 @@ function UserModal({ open, onClose, onSave, form, setForm, groups, editingId }) 
               </select>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-warm-700 mb-1">手机</label>
               <input className="input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="手机号" />
@@ -93,15 +108,15 @@ function GroupModal({ open, onClose, groups, onSaveGroup, onDeleteGroup }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-soft-xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-soft-xl p-4 md:p-6 w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold">管理分组</h3>
           <button onClick={onClose} className="text-warm-400 hover:text-warm-600"><X size={20} /></button>
         </div>
 
         {/* 新建 / 编辑 */}
-        <div className="flex gap-2 mb-4">
+        <div className="flex flex-col sm:flex-row gap-2 mb-4">
           <input
             className="input flex-1"
             value={groupName}
@@ -109,10 +124,12 @@ function GroupModal({ open, onClose, groups, onSaveGroup, onDeleteGroup }) {
             placeholder="输入分组名称"
             onKeyDown={(e) => e.key === 'Enter' && handleSave()}
           />
-          <button onClick={handleSave} className="btn-primary text-sm">{editId ? '更新' : '新建'}</button>
-          {editId && (
-            <button onClick={() => { setEditId(null); setGroupName(''); }} className="btn-secondary text-sm">取消</button>
-          )}
+          <div className="flex gap-2">
+            <button onClick={handleSave} className="btn-primary text-sm flex-1 sm:flex-none">{editId ? '更新' : '新建'}</button>
+            {editId && (
+              <button onClick={() => { setEditId(null); setGroupName(''); }} className="btn-secondary text-sm">取消</button>
+            )}
+          </div>
         </div>
 
         {/* 分组列表 */}
@@ -164,8 +181,8 @@ function PointModal({ open, onClose, onSave, user }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-soft-xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-soft-xl p-4 md:p-6 w-full max-w-sm max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold">积分调整</h3>
           <button onClick={onClose} className="text-warm-400 hover:text-warm-600"><X size={20} /></button>
@@ -216,7 +233,7 @@ function PointHistoryModal({ open, onClose, userId }) {
     setLoading(true);
     (async () => {
       try {
-        const res = await api.get(`/users/${userId}/points/history`);
+        const res = await api.get(`/users/${userId}/point-logs`);
         if (cancelled) return;
         const data = res?.data || res;
         const recs = Array.isArray(data) ? data : (data?.list || []);
@@ -233,8 +250,8 @@ function PointHistoryModal({ open, onClose, userId }) {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-soft-xl p-6 w-full max-w-lg max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-soft-xl p-4 md:p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold flex items-center gap-2"><History size={18} /> 积分流水记录</h3>
           <button onClick={onClose} className="text-warm-400 hover:text-warm-600"><X size={20} /></button>
@@ -261,8 +278,8 @@ function PointHistoryModal({ open, onClose, userId }) {
                 <tr key={r.id || idx} className="hover:bg-warm-50/80">
                   <td className="table-cell text-xs text-warm-500">{r.created_at}</td>
                   <td className="table-cell">
-                    <span className={`font-medium ${(r.amount ?? 0) >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
-                      {(r.amount ?? 0) >= 0 ? '+' : ''}{r.amount}
+                    <span className={`font-medium ${(r.points ?? 0) >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
+                      {(r.points ?? 0) >= 0 ? '+' : ''}{r.points}
                     </span>
                   </td>
                   <td className="table-cell text-sm text-warm-600">{r.reason || '-'}</td>
@@ -290,6 +307,10 @@ export default function Users() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const limit = 15;
+  const [selectedIds, setSelectedIds] = useState(new Set());
 
   // ---- 用户弹窗 ----
   const [userModalOpen, setUserModalOpen] = useState(false);
@@ -333,20 +354,22 @@ export default function Users() {
     setLoading(true);
     setError('');
     try {
-      const params = {};
+      const params = { page, limit };
       if (search) params.keyword = search;
       if (roleFilter) params.role = roleFilter;
       if (selectedGroupId) params.group_id = selectedGroupId;
       const res = await api.get('/users', { params });
       const data = res?.data || res;
-      const users = Array.isArray(data) ? data : (data?.list || []);
-      setUsers(users);
+      const list = data?.list || [];
+      const totalCount = data?.total || 0;
+      setUsers(list);
+      setTotal(totalCount);
     } catch (err) {
       setError(err?.message || '获取用户列表失败');
     } finally {
       setLoading(false);
     }
-  }, [search, roleFilter, selectedGroupId]);
+  }, [search, roleFilter, selectedGroupId, page]);
 
   useEffect(() => { fetchGroups(); }, [fetchGroups]);
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
@@ -423,10 +446,47 @@ export default function Users() {
     const action = user.status === 'active' ? '停用' : '启用';
     if (!window.confirm(`确定${action}用户「${user.real_name || user.username}」？`)) return;
     try {
-      await api.put(`/users/${user.id}/status`, { status: user.status === 'active' ? 'inactive' : 'active' });
+      await api.put(`/users/${user.id}`, { status: user.status === 'active' ? 'inactive' : 'active' });
       fetchUsers();
     } catch (err) {
       alert(err?.message || '操作失败');
+    }
+  };
+
+  /* ================= 批量选择 ================= */
+  const toggleSelect = (id) => {
+    const next = new Set(selectedIds);
+    next.has(id) ? next.delete(id) : next.add(id);
+    setSelectedIds(next);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === users.length && users.length > 0) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(users.map(u => u.id)));
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`确定删除选中的 ${selectedIds.size} 个用户？此操作不可恢复。`)) return;
+    try {
+      await api.post('/users/batch-delete', { ids: Array.from(selectedIds) });
+      setSelectedIds(new Set());
+      fetchUsers();
+    } catch (err) {
+      alert(err?.message || '批量删除失败');
+    }
+  };
+
+  const handleDeleteUser = async (user) => {
+    if (!window.confirm(`确定删除用户「${user.real_name || user.username}」？此操作不可恢复。`)) return;
+    try {
+      await api.delete(`/users/${user.id}`);
+      fetchUsers();
+    } catch (err) {
+      alert(err?.message || '删除失败');
     }
   };
 
@@ -438,7 +498,7 @@ export default function Users() {
 
   const savePointAdjust = async (userId, amount, reason) => {
     try {
-      await api.post(`/users/${userId}/points`, { amount, reason });
+      await api.put(`/users/${userId}/points`, { amount, reason });
       setPointModalOpen(false);
       setPointTarget(null);
       fetchUsers();
@@ -611,31 +671,38 @@ export default function Users() {
       </div>
 
       {/* 筛选 + 操作行 */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[200px] max-w-xs">
+      <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3">
+        <div className="relative flex-1 min-w-0 sm:min-w-[200px] sm:max-w-xs">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-warm-400" />
           <input
-            className="input pl-9"
+            className="input pl-9 w-full"
             placeholder="搜索用户名/姓名..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <select className="input w-28" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+        <select className="input w-full sm:w-28" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
           <option value="">全部角色</option>
           <option value="admin">管理员</option>
           <option value="sales">业务员</option>
         </select>
-        <div className="flex-1" />
-        <button onClick={handleExportProfiles} className="btn-secondary flex items-center gap-1.5 text-sm">
-          <Download size={16} /> 导出画像
-        </button>
-        <button onClick={() => { setImportModalOpen(true); setImportResult(null); setImportPreview([]); }} className="btn-secondary flex items-center gap-1.5 text-sm">
-          <Upload size={16} /> 批量导入
-        </button>
-        <button onClick={openAddUser} className="btn-primary flex items-center gap-1.5 text-sm">
-          <Plus size={16} /> 新建用户
-        </button>
+        <div className="hidden sm:block flex-1" />
+        <div className="flex flex-wrap gap-2">
+          {selectedIds.size > 0 && (
+            <button onClick={handleBatchDelete} className="btn-danger flex items-center gap-1.5 text-sm flex-1 sm:flex-none justify-center">
+              <Trash2 size={16} /> 删除选中 ({selectedIds.size})
+            </button>
+          )}
+          <button onClick={handleExportProfiles} className="btn-secondary flex items-center gap-1.5 text-sm flex-1 sm:flex-none justify-center">
+            <Download size={16} /> 导出画像
+          </button>
+          <button onClick={() => { setImportModalOpen(true); setImportResult(null); setImportPreview([]); }} className="btn-secondary flex items-center gap-1.5 text-sm flex-1 sm:flex-none justify-center">
+            <Upload size={16} /> 批量导入
+          </button>
+          <button onClick={openAddUser} className="btn-primary flex items-center gap-1.5 text-sm flex-1 sm:flex-none justify-center">
+            <Plus size={16} /> 新建用户
+          </button>
+        </div>
       </div>
 
       {/* 用户列表 */}
@@ -651,82 +718,150 @@ export default function Users() {
             <button onClick={openAddUser} className="text-primary-600 hover:text-primary-800 mt-1 underline">新建用户</button>
           </div>
         ) : (
-          <div className="overflow-auto">
-            <table className="w-full">
-              <thead>
-                <tr>
-                  <th className="table-header">姓名</th>
-                  <th className="table-header">用户名</th>
-                  <th className="table-header w-20">角色</th>
-                  <th className="table-header w-24">分组</th>
-                  <th className="table-header w-28">手机</th>
-                  <th className="table-header w-20">状态</th>
-                  <th className="table-header w-20">积分</th>
-                  <th className="table-header w-36">创建时间</th>
-                  <th className="table-header w-24">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-warm-100">
-                {users.map((user) => (
-                  <tr
-                    key={user.id}
-                    className="hover:bg-warm-50/80 cursor-pointer"
-                    onClick={() => openPointHistory(user)}
-                  >
-                    <td className="table-cell font-medium text-warm-900">{user.real_name || '-'}</td>
-                    <td className="table-cell text-warm-600">{user.username}</td>
-                    <td className="table-cell">
-                      <span className={`badge text-xs ${user.role === 'admin' ? 'badge-red' : 'badge-blue'}`}>
-                        {user.role === 'admin' ? '管理员' : '业务员'}
-                      </span>
-                    </td>
-                    <td className="table-cell text-warm-500">{user.group_name || '-'}</td>
-                    <td className="table-cell text-warm-500 text-xs">{user.phone || '-'}</td>
-                    <td className="table-cell">
-                      <span className={`inline-flex items-center gap-1 text-xs font-medium ${
-                        user.status === 'active' ? 'text-emerald-600' : 'text-rose-500'
-                      }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${
-                          user.status === 'active' ? 'bg-emerald-500' : 'bg-rose-300'
-                        }`} />
-                        {user.status === 'active' ? '正常' : '停用'}
-                      </span>
-                    </td>
-                    <td className="table-cell">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); openPointAdjust(user); }}
-                        className="font-semibold text-primary-600 hover:text-primary-800 hover:underline"
-                        title="点击调整积分"
-                      >
-                        {user.points ?? 0}
-                      </button>
-                    </td>
-                    <td className="table-cell text-xs text-warm-400">{user.created_at || '-'}</td>
-                    <td className="table-cell">
-                      <div className="flex items-center gap-1">
-                        {user.role === 'sales' && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); openProfile(user); }}
-                            className="p-1.5 rounded-lg hover:bg-sky-50 text-warm-400 hover:text-sky-600 transition"
-                            title="查看画像"
-                          >
-                            <Eye size={15} />
-                          </button>
-                        )}
-                        <button
-                          onClick={(e) => { e.stopPropagation(); openEditUser(user); }}
-                          className="p-1.5 rounded-lg hover:bg-warm-50 text-warm-400 hover:text-primary-600 transition"
-                          title="编辑"
-                        >
-                          <Edit3 size={15} />
-                        </button>
-                      </div>
-                    </td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[700px]">
+                <thead>
+                  <tr>
+                    <th className="table-header w-10">
+                      <input type="checkbox" checked={selectedIds.size === users.length && users.length > 0} onChange={toggleSelectAll} className="w-4 h-4 rounded accent-primary-600" />
+                    </th>
+                    <th className="table-header">姓名</th>
+                    <th className="table-header">用户名</th>
+                    <th className="table-header">角色</th>
+                    <th className="table-header">分组</th>
+                    <th className="table-header">手机</th>
+                    <th className="table-header">状态</th>
+                    <th className="table-header">积分</th>
+                    <th className="table-header">称号</th>
+                    <th className="table-header">创建时间</th>
+                    <th className="table-header">操作</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-warm-100">
+                  {users.map((user) => (
+                    <tr
+                      key={user.id}
+                      className="hover:bg-warm-50/80 cursor-pointer"
+                      onClick={() => openPointHistory(user)}
+                    >
+                      <td className="table-cell" onClick={(e) => e.stopPropagation()}>
+                        <input type="checkbox" checked={selectedIds.has(user.id)} onChange={() => toggleSelect(user.id)} className="w-4 h-4 rounded accent-primary-600" />
+                      </td>
+                      <td className="table-cell font-medium text-warm-900">{user.real_name || '-'}</td>
+                      <td className="table-cell text-warm-600">{user.username}</td>
+                      <td className="table-cell">
+                        <span className={`badge text-xs ${user.role === 'admin' ? 'badge-red' : 'badge-blue'}`}>
+                          {user.role === 'admin' ? '管理员' : '业务员'}
+                        </span>
+                      </td>
+                      <td className="table-cell text-warm-500">{user.group_name || '-'}</td>
+                      <td className="table-cell text-warm-500 text-xs">{user.phone || '-'}</td>
+                      <td className="table-cell">
+                        <span className={`inline-flex items-center gap-1 text-xs font-medium ${
+                          user.status === 'active' ? 'text-emerald-600' : 'text-rose-500'
+                        }`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${
+                            user.status === 'active' ? 'bg-emerald-500' : 'bg-rose-300'
+                          }`} />
+                          {user.status === 'active' ? '正常' : '停用'}
+                        </span>
+                      </td>
+                      <td className="table-cell">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); openPointAdjust(user); }}
+                          className="font-semibold text-primary-600 hover:text-primary-800 hover:underline"
+                          title="点击调整积分"
+                        >
+                          {user.points ?? 0}
+                        </button>
+                      </td>
+                      <td className="table-cell">
+                        {(() => {
+                          const lvl = getLevelInfo(user.total_earned_points);
+                          return (
+                            <span className={`text-xs font-medium ${lvl.color}`} title={`${lvl.desc || ''}`}>
+                              {lvl.title}
+                            </span>
+                          );
+                        })()}
+                      </td>
+                      <td className="table-cell text-xs text-warm-400">{user.created_at || '-'}</td>
+                      <td className="table-cell">
+                        <div className="flex items-center gap-1">
+                          {user.role === 'sales' && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); openProfile(user); }}
+                              className="p-1.5 rounded-lg hover:bg-sky-50 text-warm-400 hover:text-sky-600 transition"
+                              title="查看画像"
+                            >
+                              <Eye size={15} />
+                            </button>
+                          )}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); openEditUser(user); }}
+                            className="p-1.5 rounded-lg hover:bg-warm-50 text-warm-400 hover:text-primary-600 transition"
+                            title="编辑"
+                          >
+                            <Edit3 size={15} />
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDeleteUser(user); }}
+                            className="p-1.5 rounded-lg hover:bg-red-50 text-warm-400 hover:text-red-600 transition"
+                            title="删除"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* 分页 */}
+            <div className="flex items-center justify-between px-1 pt-3">
+              <span className="text-sm text-warm-500">
+                共 {total} 条，第 {page}/{Math.ceil(total / limit) || 1} 页
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { setPage(p => Math.max(1, p - 1)); setSelectedIds(new Set()); }}
+                  disabled={page <= 1}
+                  className="p-2 rounded-lg border border-warm-200 hover:bg-warm-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <ChevronLeft size={16} className="text-warm-600" />
+                </button>
+                {Array.from({ length: Math.min(5, Math.ceil(total / limit)) }, (_, i) => {
+                  const totalPages = Math.ceil(total / limit);
+                  const start = Math.max(1, Math.min(page - 2, totalPages - 4));
+                  const pageNum = start + i;
+                  if (pageNum > totalPages) return null;
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => { setPage(pageNum); setSelectedIds(new Set()); }}
+                      className={`w-9 h-9 rounded-lg text-sm font-medium transition ${
+                        page === pageNum
+                          ? 'bg-primary-600 text-white'
+                          : 'border border-warm-200 text-warm-600 hover:bg-warm-50'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                })}
+                <button
+                  onClick={() => { setPage(p => p + 1); setSelectedIds(new Set()); }}
+                  disabled={page >= Math.ceil(total / limit)}
+                  className="p-2 rounded-lg border border-warm-200 hover:bg-warm-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <ChevronRight size={16} className="text-warm-600" />
+                </button>
+              </div>
+            </div>
+          </>
         )}
       </div>
 

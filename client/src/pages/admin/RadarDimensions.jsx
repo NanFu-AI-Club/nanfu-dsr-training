@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Plus, Save, Trash2, Loader2, Star, BookOpen, TrendingUp, MessageSquare,
-  Users, FileText, ToggleLeft, ToggleRight, X, Edit3, Target,
+  Users, FileText, Heart, Clock, ToggleLeft, ToggleRight, X, Edit3, Target,
 } from 'lucide-react';
 import api from '../../api';
 
@@ -10,6 +10,8 @@ const ICON_OPTIONS = [
   { value: 'trending', label: '趋势', Icon: TrendingUp },
   { value: 'message', label: '消息', Icon: MessageSquare },
   { value: 'users', label: '用户', Icon: Users },
+  { value: 'heart', label: '心形', Icon: Heart },
+  { value: 'clock', label: '时钟', Icon: Clock },
   { value: 'file', label: '文件', Icon: FileText },
   { value: 'star', label: '星星', Icon: Star },
   { value: 'target', label: '目标', Icon: Target },

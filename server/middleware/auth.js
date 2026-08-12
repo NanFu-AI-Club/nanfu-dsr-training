@@ -3,7 +3,18 @@
  */
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'nanfu-dsr-training-secret-key-2025';
+// 安全：强制要求环境变量设置JWT_SECRET
+let JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  // 生产环境必须设置，开发环境生成随机密钥并警告
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('❌ 生产环境必须设置 JWT_SECRET 环境变量');
+  }
+  // 开发环境生成随机密钥
+  JWT_SECRET = require('crypto').randomBytes(32).toString('hex');
+  console.warn('⚠️  警告: JWT_SECRET 未设置，已生成临时密钥（仅用于开发环境）');
+}
+
 const JWT_EXPIRES = '24h';
 
 function signToken(payload) {

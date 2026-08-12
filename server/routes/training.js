@@ -84,7 +84,103 @@ function simulateCustomerReply(scenario, historyMessages, userMessage) {
 }
 
 /**
- * 模拟生成评估报告（无AI API时）
+ * AI生成评估报告（调用AI模型对对话进行智能评分）
+ */
+async function generateAIEvaluation(aiConfig, scenario, messages) {
+  const userMessages = messages.filter(m => m.role === 'user');
+  const aiMessages = messages.filter(m => m.role === 'ai');
+
+  // 构建对话文本
+  const dialogueText = messages
+    .filter(m => m.role === 'user' || m.role === 'ai')
+    .map(m => m.role === 'user' ? `销售代表: ${m.content}` : `客户: ${m.content}`)
+    .join('\n');
+
+  const evalPrompt = `你是一位资深的销售培训导师，请根据以下陪练对话记录对销售代表的表现进行专业评估。
+
+【场景信息】
+场景标题：${scenario.title}
+扮演角色：${scenario.role_type}
+场景描述：${scenario.scenario_prompt || '无'}
+卖进目标：${scenario.sales_goal || '未设置'}
+
+【对话记录】
+${dialogueText}
+
+【评估要求】
+请从以下7个维度进行评分（0-100分），并给出具体评语：
+1. 沟通表达 - 语言组织、表达清晰度、沟通流畅度
+2. 产品知识 - 对产品特点、优势的介绍准确性和专业性
+3. 异议处理 - 面对客户质疑时的应对策略和说服力
+4. 谈判技巧 - 价格谈判、促成合作的能力和策略运用
+5. 客户关系 - 客户服务意识、关系建立与维护能力
+6. 客情维护 - 长期客情建立、信任培养、情感联结
+7. 职业素养 - 专业形象、礼仪规范、职业态度
+
+${scenario.sales_goal ? `【卖进目标达成度】
+本次卖进目标为「${scenario.sales_goal}」，请评估销售代表是否达成了该目标，并在建议中说明达成情况。` : ''}
+
+请严格按照以下JSON格式返回（不要包含其他文字）：
+{
+  "dimensions": [
+    {"name": "沟通表达", "score": 数字, "comment": "具体评语"},
+    {"name": "产品知识", "score": 数字, "comment": "具体评语"},
+    {"name": "异议处理", "score": 数字, "comment": "具体评语"},
+    {"name": "谈判技巧", "score": 数字, "comment": "具体评语"},
+    {"name": "客户关系", "score": 数字, "comment": "具体评语"},
+    {"name": "客情维护", "score": 数字, "comment": "具体评语"},
+    {"name": "职业素养", "score": 数字, "comment": "具体评语"}
+  ],
+  "strengths": ["优势1", "优势2"],
+  "weaknesses": ["不足1", "不足2"],
+  "suggestions": "改进建议${scenario.sales_goal ? '（包含卖进目标达成情况）' : ''}"
+}
+
+评分标准：90+优秀，75-89良好，60-74合格，60以下需提升。评分应基于对话实际内容，客观公正。${scenario.sales_goal ? '如果销售代表未能达成卖进目标，应在总分和谈判技巧维度中体现。' : ''}`;
+
+  const apiMessages = [
+    { role: 'system', content: '你是一位专业的销售培训评估专家。请严格按照要求的JSON格式输出评估结果，不要包含markdown标记或其他多余文字。' },
+    { role: 'user', content: evalPrompt }
+  ];
+
+  const response = await callAIAPI(aiConfig, apiMessages);
+
+  // 解析AI返回的JSON
+  let cleaned = response.trim();
+  // 移除可能的markdown代码块标记
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
+  }
+
+  const result = JSON.parse(cleaned);
+
+  // 验证并规范化数据
+  if (!result.dimensions || !Array.isArray(result.dimensions)) {
+    throw new Error('AI返回格式错误：缺少dimensions');
+  }
+
+  // 确保分数是数字且在0-100范围
+  result.dimensions = result.dimensions.map(d => ({
+    name: d.name,
+    score: Math.max(0, Math.min(100, Math.round(Number(d.score) || 0))),
+    comment: d.comment || ''
+  }));
+
+  // 计算总分
+  result.total_score = Math.round(result.dimensions.reduce((sum, d) => sum + d.score, 0) / result.dimensions.length);
+
+  // 确保其他字段
+  result.strengths = Array.isArray(result.strengths) ? result.strengths : [];
+  result.weaknesses = Array.isArray(result.weaknesses) ? result.weaknesses : [];
+  if (result.strengths.length === 0) result.strengths.push('完成陪练对话');
+  if (result.weaknesses.length === 0) result.weaknesses.push('整体表现有待提升');
+  if (!result.suggestions) result.suggestions = '建议继续加强销售技能训练。';
+
+  return result;
+}
+
+/**
+ * 模拟生成评估报告（无AI API时的降级方案）
  */
 function generateEvaluationReport(scenario, messages) {
   const userMessages = messages.filter(m => m.role === 'user');
@@ -133,6 +229,15 @@ function generateEvaluationReport(scenario, messages) {
   if (messageCount >= 5) customerRelation += 10;
   customerRelation = Math.min(100, customerRelation);
 
+  // 客情维护：基于客情建立与长期维护
+  let customerCare = 50;
+  if (allText.includes('老朋友') || allText.includes('老客户') || allText.includes('一直')) customerCare += 8;
+  if (allText.includes('维护') || allText.includes('回访') || allText.includes('拜访')) customerCare += 8;
+  if (allText.includes('信任') || allText.includes('感情') || allText.includes('关系')) customerCare += 7;
+  if (allText.includes('帮忙') || allText.includes('支持') || allText.includes('照顾')) customerCare += 7;
+  if (messageCount >= 4) customerCare += 10;
+  customerCare = Math.min(100, customerCare);
+
   // 职业素养：基于专业性
   let professionalism = 60;
   if (allText.includes('你好') || allText.includes('您好')) professionalism += 5;
@@ -147,6 +252,7 @@ function generateEvaluationReport(scenario, messages) {
     { name: '异议处理', score: objectionHandling, comment: objectionHandling >= 80 ? '异议处理能力强，应变出色' : objectionHandling >= 60 ? '异议处理能力良好，可加强应对策略' : '建议学习异议处理技巧' },
     { name: '谈判技巧', score: negotiation, comment: negotiation >= 80 ? '谈判策略得当，推进有力' : negotiation >= 60 ? '谈判技巧良好，可提升协商策略' : '建议加强谈判技巧训练' },
     { name: '客户关系', score: customerRelation, comment: customerRelation >= 80 ? '善于维护客户关系' : customerRelation >= 60 ? '客户关系维护较好' : '建议加强客户关系管理意识' },
+    { name: '客情维护', score: customerCare, comment: customerCare >= 80 ? '客情维护到位，善于建立长期信任' : customerCare >= 60 ? '客情维护意识良好，可进一步提升' : '建议加强客情维护意识，多关注客户长期关系' },
     { name: '职业素养', score: professionalism, comment: professionalism >= 80 ? '职业素养优秀，专业性强' : professionalism >= 60 ? '职业素养良好' : '建议提升职业化训练' }
   ];
 
@@ -259,7 +365,7 @@ router.get('/scenarios', authRequired, (req, res) => {
 router.post('/scenarios', authRequired, adminRequired, (req, res) => {
   try {
     const db = req.db;
-    const { title, description, role_type, scenario_prompt, difficulty, tags } = req.body;
+    const { title, description, role_type, scenario_prompt, sales_goal, difficulty, tags } = req.body;
 
     if (!title) {
       return res.status(400).json({ code: 400, message: '情景标题不能为空' });
@@ -275,11 +381,11 @@ router.post('/scenarios', authRequired, adminRequired, (req, res) => {
     const parsedTags = tags ? (typeof tags === 'string' ? tags : JSON.stringify(tags)) : null;
 
     db.prepare(`
-      INSERT INTO training_scenarios (id, title, description, role_type, scenario_prompt, difficulty, tags, status, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)
-    `).run(id, title, description || null, role_type, scenario_prompt, difficulty || 'medium', parsedTags, req.user.id);
+      INSERT INTO training_scenarios (id, title, description, role_type, scenario_prompt, sales_goal, difficulty, tags, status, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+    `).run(id, title, description || null, role_type, scenario_prompt, sales_goal || null, difficulty || 'medium', parsedTags, req.user.id);
 
-    logActivity(db, req.user.id, 'create', 'scenario', id, { title, role_type }, req.ip);
+    logActivity(db, req.user.id, 'create', 'scenario', id, JSON.stringify({ title, role_type }));
 
     res.json({ code: 0, message: '情景创建成功', data: { id } });
   } catch (err) {
@@ -293,7 +399,7 @@ router.put('/scenarios/:id', authRequired, adminRequired, (req, res) => {
   try {
     const db = req.db;
     const { id } = req.params;
-    const fields = ['title', 'description', 'role_type', 'scenario_prompt', 'difficulty', 'tags', 'status'];
+    const fields = ['title', 'description', 'role_type', 'scenario_prompt', 'sales_goal', 'difficulty', 'tags', 'status'];
 
     const scenario = db.prepare('SELECT * FROM training_scenarios WHERE id = ?').get(id);
     if (!scenario) {
@@ -321,7 +427,7 @@ router.put('/scenarios/:id', authRequired, adminRequired, (req, res) => {
     }
 
     logActivity(db, req.user.id, 'update', 'scenario', id,
-      { title: req.body.title || scenario.title, changed_fields: Object.keys(req.body) }, req.ip);
+      JSON.stringify({ title: req.body.title || scenario.title, changed_fields: Object.keys(req.body) }), req.ip);
 
     res.json({ code: 0, message: '情景更新成功' });
   } catch (err) {
@@ -350,7 +456,7 @@ router.delete('/scenarios/:id', authRequired, adminRequired, (req, res) => {
     db.prepare('DELETE FROM training_sessions WHERE scenario_id = ?').run(id);
     db.prepare('DELETE FROM training_scenarios WHERE id = ?').run(id);
 
-    logActivity(db, req.user.id, 'delete', 'scenario', id, { title: scenario.title }, req.ip);
+    logActivity(db, req.user.id, 'delete', 'scenario', id, JSON.stringify({ title: scenario.title }));
 
     res.json({ code: 0, message: '情景已删除' });
   } catch (err) {
@@ -397,7 +503,7 @@ router.post('/sessions', authRequired, (req, res) => {
     `).run(uuidv4(), sessionId, `您好！我是${scenario.role_type}。${scenario.scenario_prompt ? scenario.scenario_prompt.split('。')[0] + '。请开始你的演示吧。' : '请开始你的销售演示吧。'}`);
 
     logActivity(db, req.user.id, 'start_training', 'session', sessionId,
-      { scenario_id, scenario_title: scenario.title }, req.ip);
+      JSON.stringify({ scenario_id, scenario_title: scenario.title }), req.ip);
 
     res.json({
       code: 0,
@@ -491,7 +597,7 @@ router.post('/sessions/:id/message', authRequired, async (req, res) => {
 
     const session = db.prepare(`
       SELECT ts.*, tsc.title as scenario_title, tsc.description as scenario_description,
-             tsc.role_type, tsc.scenario_prompt, tsc.difficulty
+             tsc.role_type, tsc.scenario_prompt, tsc.sales_goal, tsc.difficulty
       FROM training_sessions ts
       JOIN training_scenarios tsc ON ts.scenario_id = tsc.id
       WHERE ts.id = ? AND ts.user_id = ?
@@ -526,8 +632,12 @@ router.post('/sessions/:id/message', authRequired, async (req, res) => {
     if (aiConfig && aiConfig.api_key && aiConfig.api_base) {
       // 有AI配置，尝试调用真实API
       try {
+        const salesGoalText = session.sales_goal
+          ? `\n\n【本次卖进目标】${session.sales_goal}\n你在对话中应围绕这个目标，根据销售代表的表现逐步决定是否接受。如果销售代表说服了你，你可以在对话后期表示愿意采购/合作。如果表现不佳，你可以提出异议或拒绝。`
+          : '';
+        const systemPrompt = (session.scenario_prompt || `你扮演${session.role_type}角色，场景：${session.scenario_title}。请用中文回应销售代表的对话，扮演一个真实的客户。保持专业但自然的对话风格。`) + salesGoalText;
         const messages = [
-          { role: 'system', content: session.scenario_prompt || `你扮演${session.role_type}角色，场景：${session.scenario_title}。请用中文回应销售代表的对话，扮演一个真实的客户。保持专业但自然的对话风格。` }
+          { role: 'system', content: systemPrompt }
         ];
 
         for (const msg of historyMessages) {
@@ -667,13 +777,13 @@ router.get('/sessions', authRequired, (req, res) => {
 });
 
 // POST /sessions/:id/end - 结束会话并生成评估报告
-router.post('/sessions/:id/end', authRequired, (req, res) => {
+router.post('/sessions/:id/end', authRequired, async (req, res) => {
   try {
     const db = req.db;
     const { id } = req.params;
 
     const session = db.prepare(`
-      SELECT ts.*, tsc.title as scenario_title, tsc.role_type, tsc.scenario_prompt, tsc.difficulty
+      SELECT ts.*, tsc.title as scenario_title, tsc.role_type, tsc.scenario_prompt, tsc.sales_goal, tsc.difficulty
       FROM training_sessions ts
       JOIN training_scenarios tsc ON ts.scenario_id = tsc.id
       WHERE ts.id = ? AND ts.user_id = ?
@@ -696,13 +806,27 @@ router.post('/sessions/:id/end', authRequired, (req, res) => {
     const aiConfig = db.prepare('SELECT * FROM ai_configs WHERE is_active = 1 ORDER BY id DESC LIMIT 1').get();
     const hasAI = aiConfig && aiConfig.api_key && aiConfig.api_base;
 
-    // 生成评估报告（目前使用模拟评分，后续可接入AI）
+    // 生成评估报告
     const scenarioObj = {
       title: session.scenario_title,
       role_type: session.role_type,
-      scenario_prompt: session.scenario_prompt
+      scenario_prompt: session.scenario_prompt,
+      sales_goal: session.sales_goal
     };
-    const evaluation = generateEvaluationReport(scenarioObj, messages);
+
+    let evaluation;
+    if (hasAI) {
+      try {
+        console.log('[training/end] 使用AI模型生成评估报告');
+        evaluation = await generateAIEvaluation(aiConfig, scenarioObj, messages);
+      } catch (aiErr) {
+        console.warn('[training/end] AI评估失败，降级为关键词评分:', aiErr.message);
+        evaluation = generateEvaluationReport(scenarioObj, messages);
+      }
+    } else {
+      console.log('[training/end] 无AI配置，使用关键词评分');
+      evaluation = generateEvaluationReport(scenarioObj, messages);
+    }
 
     // 写入 training_reports 表
     const reportId = uuidv4();
@@ -736,16 +860,22 @@ router.post('/sessions/:id/end', authRequired, (req, res) => {
       `[演练评估] 综合得分: ${evaluation.total_score}分\n各项评分: ${dimSummary}\n\n优势: ${evaluation.strengths.join('；')}\n待改进: ${evaluation.weaknesses.join('；')}\n\n建议: ${evaluation.suggestions}`
     );
 
-    // 发放积分奖励
-    const earnedPoints = Math.max(5, Math.floor(evaluation.total_score / 10));
-    db.prepare(`
-      INSERT INTO point_logs (id, user_id, points, reason, source_type, source_id)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(uuidv4(), req.user.id, earnedPoints, `完成陪练: ${session.scenario_title}`, 'training', id);
-    db.prepare('UPDATE users SET points = points + ? WHERE id = ?').run(earnedPoints, req.user.id);
+    // 发放积分奖励（幂等检查，防止重复发放）
+    const alreadyAwarded = db.prepare(
+      `SELECT id FROM point_logs WHERE user_id = ? AND source_type = 'training' AND source_id = ?`
+    ).get(req.user.id, id);
+    let earnedPoints = 0;
+    if (!alreadyAwarded) {
+      earnedPoints = Math.max(5, Math.floor(evaluation.total_score / 10));
+      db.prepare(`
+        INSERT INTO point_logs (id, user_id, points, reason, source_type, source_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(uuidv4(), req.user.id, earnedPoints, `完成陪练: ${session.scenario_title}`, 'training', id);
+      db.prepare('UPDATE users SET points = points + ?, total_earned_points = total_earned_points + ? WHERE id = ?').run(earnedPoints, earnedPoints, req.user.id);
+    }
 
     logActivity(db, req.user.id, 'end_training', 'session', id,
-      { scenario_title: session.scenario_title, score: evaluation.total_score, used_ai: hasAI }, req.ip);
+      JSON.stringify({ scenario_title: session.scenario_title, score: evaluation.total_score, used_ai: hasAI }));
 
     res.json({
       code: 0,
@@ -868,6 +998,83 @@ router.get('/reports', authRequired, (req, res) => {
     });
   } catch (err) {
     console.error('[training/reports] Error:', err);
+    res.status(500).json({ code: 500, message: '服务器内部错误' });
+  }
+});
+
+// ==================== 管理员 API ====================
+
+// GET /training/admin/sessions - 查看所有用户的陪练会话
+router.get('/admin/sessions', authRequired, adminRequired, (req, res) => {
+  try {
+    const db = req.db;
+    const { user_id, status, scenario_id, date_from, date_to } = req.query;
+    const conditions = [];
+    const params = [];
+    if (status) { conditions.push('ts.status = ?'); params.push(status); }
+    if (user_id) { conditions.push('ts.user_id = ?'); params.push(user_id); }
+    if (scenario_id) { conditions.push('ts.scenario_id = ?'); params.push(scenario_id); }
+    if (date_from) { conditions.push('DATE(ts.started_at) >= ?'); params.push(date_from); }
+    if (date_to) { conditions.push('DATE(ts.started_at) <= ?'); params.push(date_to); }
+    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    const sessions = db.prepare(`
+      SELECT ts.*, u.username, u.real_name,
+             tsc.title as scenario_title, tsc.role_type, tsc.difficulty,
+             (SELECT tr.total_score FROM training_reports tr WHERE tr.session_id = ts.id) as report_score
+      FROM training_sessions ts
+      LEFT JOIN users u ON ts.user_id = u.id
+      JOIN training_scenarios tsc ON ts.scenario_id = tsc.id
+      ${whereClause}
+      ORDER BY ts.started_at DESC
+      LIMIT 200
+    `).all(...params);
+
+    res.json({ code: 0, data: sessions });
+  } catch (err) {
+    console.error('[training/admin/sessions] Error:', err);
+    res.status(500).json({ code: 500, message: '服务器内部错误' });
+  }
+});
+
+// GET /training/admin/sessions/:id/messages - 管理员查看会话消息
+router.get('/admin/sessions/:id/messages', authRequired, adminRequired, (req, res) => {
+  try {
+    const db = req.db;
+    const session = db.prepare(`
+      SELECT ts.*, tsc.title as scenario_title, tsc.role_type, u.username, u.real_name
+      FROM training_sessions ts
+      JOIN training_scenarios tsc ON ts.scenario_id = tsc.id
+      LEFT JOIN users u ON ts.user_id = u.id
+      WHERE ts.id = ?
+    `).get(req.params.id);
+    if (!session) return res.status(404).json({ code: 404, message: '陪练会话不存在' });
+
+    const messages = db.prepare('SELECT * FROM training_messages WHERE session_id = ? ORDER BY created_at ASC').all(req.params.id);
+    res.json({ code: 0, data: { session, messages } });
+  } catch (err) {
+    console.error('[training/admin/messages] Error:', err);
+    res.status(500).json({ code: 500, message: '服务器内部错误' });
+  }
+});
+
+// GET /training/admin/sessions/:id/report - 管理员查看会话报告
+router.get('/admin/sessions/:id/report', authRequired, adminRequired, (req, res) => {
+  try {
+    const db = req.db;
+    const report = db.prepare(`
+      SELECT tr.*, ts.started_at, ts.ended_at, tsc.title as scenario_title,
+             u.username, u.real_name
+      FROM training_reports tr
+      JOIN training_sessions ts ON tr.session_id = ts.id
+      JOIN training_scenarios tsc ON ts.scenario_id = tsc.id
+      LEFT JOIN users u ON ts.user_id = u.id
+      WHERE tr.session_id = ?
+    `).get(req.params.id);
+    if (!report) return res.status(404).json({ code: 404, message: '暂无评估报告' });
+    res.json({ code: 0, data: report });
+  } catch (err) {
+    console.error('[training/admin/report] Error:', err);
     res.status(500).json({ code: 500, message: '服务器内部错误' });
   }
 });

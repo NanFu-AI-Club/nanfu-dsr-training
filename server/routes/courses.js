@@ -1,24 +1,91 @@
 /**
- * 课程管理与学习进度路由
- * 表: courses, learning_progress, roadmap_stages, user_roadmap_progress, point_logs, users
+ * 课程路由（含文件上传）
  */
 const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const { authRequired, adminRequired } = require('../middleware/auth');
+
+// 课程文件上传目录
+const uploadDir = path.join(__dirname, '..', 'uploads', 'courses');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// 文件上传配置
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = [
+      'video/mp4', 'video/webm', 'video/quicktime',
+      'application/pdf',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    ];
+    const allowedExts = ['.mp4', '.webm', '.mov', '.pdf', '.ppt', '.pptx'];
+    const ext = path.extname(file.originalname).toLowerCase();
+
+    if (allowedTypes.includes(file.mimetype) || allowedExts.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error('只支持视频(mp4/webm/mov)、PDF、PPT文件'));
+    }
+  }
+});
 
 // ==================== 辅助函数 ====================
 
 function logActivity(db, userId, action, targetType, targetId, detail, ip) {
-  db.prepare(`
-    INSERT INTO activity_logs (id, user_id, action, module, target_type, target_id, detail, ip)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(uuidv4(), userId, action, 'courses', targetType, targetId, detail ? JSON.stringify(detail) : null, ip || null);
+  try {
+    db.prepare(`
+      INSERT INTO activity_logs (id, user_id, action, module, target_type, target_id, detail, ip)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(uuidv4(), userId, action, 'courses', targetType, targetId, detail ? JSON.stringify(detail) : null, ip || null);
+  } catch (e) {
+    console.error('[courses] logActivity error:', e.message);
+  }
 }
 
-// ==================== 静态路由 (必须在 /:id 之前) ====================
+// ==================== 文件上传 ====================
 
-// GET /courses - 课程列表，支持分页、type筛选、category筛选、keyword搜索
+// POST /courses/upload - 上传课程文件（管理员）
+router.post('/upload', authRequired, adminRequired, (req, res) => {
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ code: 400, message: err.message });
+    }
+    if (!req.file) {
+      return res.status(400).json({ code: 400, message: '请选择文件' });
+    }
+
+    const fileUrl = `/uploads/courses/${req.file.filename}`;
+    res.json({
+      code: 0,
+      message: '上传成功',
+      data: {
+        url: fileUrl,
+        filename: req.file.originalname,
+        size: req.file.size
+      }
+    });
+  });
+});
+
+// ==================== 课程管理 ====================
+
+// GET /courses - 课程列表
 router.get('/', authRequired, (req, res) => {
   try {
     const db = req.db;
@@ -85,9 +152,6 @@ router.post('/', authRequired, adminRequired, (req, res) => {
     if (!title) {
       return res.status(400).json({ code: 400, message: '课程标题不能为空' });
     }
-    if (!resource_url) {
-      return res.status(400).json({ code: 400, message: '课程资源地址不能为空' });
-    }
 
     const id = uuidv4();
     const parsedTags = tags ? (typeof tags === 'string' ? tags : JSON.stringify(tags)) : null;
@@ -101,7 +165,7 @@ router.post('/', authRequired, adminRequired, (req, res) => {
       type || 'video',
       description || null,
       cover_url || null,
-      resource_url,
+      resource_url || null,
       duration || 0,
       category || null,
       parsedTags,
@@ -110,7 +174,7 @@ router.post('/', authRequired, adminRequired, (req, res) => {
       req.user.id
     );
 
-    logActivity(db, req.user.id, 'create', 'course', id, { title, type: type || 'video' }, req.ip);
+    logActivity(db, req.user.id, 'create', 'course', id, { title, type: type || 'video' });
 
     res.json({ code: 0, message: '课程创建成功', data: { id } });
   } catch (err) {
@@ -119,7 +183,7 @@ router.post('/', authRequired, adminRequired, (req, res) => {
   }
 });
 
-// GET /courses/my-progress - 当前用户学习进度列表
+// GET /courses/my-progress
 router.get('/my-progress', authRequired, (req, res) => {
   try {
     const db = req.db;
@@ -160,7 +224,7 @@ router.get('/my-progress', authRequired, (req, res) => {
   }
 });
 
-// GET /courses/roadmap - 获取通关路线图
+// GET /courses/roadmap
 router.get('/roadmap', authRequired, (req, res) => {
   try {
     const db = req.db;
@@ -174,7 +238,6 @@ router.get('/roadmap', authRequired, (req, res) => {
       let requiredCourseIds = [];
       try { requiredCourseIds = JSON.parse(stage.required_courses || '[]'); } catch (_) { requiredCourseIds = []; }
 
-      // 获取本阶段对应课程
       const courses = [];
       if (requiredCourseIds.length > 0) {
         const placeholders = requiredCourseIds.map(() => '?').join(',');
@@ -204,16 +267,13 @@ router.get('/roadmap', authRequired, (req, res) => {
         }
       }
 
-      // 获取用户对该阶段的完成状态
       const userStage = db.prepare(`
         SELECT * FROM user_roadmap_progress WHERE user_id = ? AND stage_id = ?
       `).get(userId, stage.id);
 
-      // 自动检测：如果 required_courses 全部完成，自动标记阶段为完成
       const allCompleted = requiredCourseIds.length > 0 && courses.every(c => c.completed);
       const stageCompleted = (userStage && userStage.completed === 1) || allCompleted;
 
-      // 如果自动检测到全部完成但 DB 未记录，更新 DB
       if (allCompleted && (!userStage || userStage.completed === 0)) {
         if (userStage) {
           db.prepare(`
@@ -248,9 +308,7 @@ router.get('/roadmap', authRequired, (req, res) => {
   }
 });
 
-// ==================== 通关路线图阶段 CRUD ====================
-
-// GET /courses/roadmap-stages - 路线图阶段列表
+// GET /courses/roadmap-stages
 router.get('/roadmap-stages', authRequired, (req, res) => {
   try {
     const db = req.db;
@@ -270,7 +328,7 @@ router.get('/roadmap-stages', authRequired, (req, res) => {
   }
 });
 
-// POST /courses/roadmap-stages - 创建路线图阶段（admin）
+// POST /courses/roadmap-stages
 router.post('/roadmap-stages', authRequired, adminRequired, (req, res) => {
   try {
     const db = req.db;
@@ -293,7 +351,7 @@ router.post('/roadmap-stages', authRequired, adminRequired, (req, res) => {
       required_courses ? JSON.stringify(required_courses) : null
     );
 
-    logActivity(db, req.user.id, 'create', 'roadmap_stage', id, { name }, req.ip);
+    logActivity(db, req.user.id, 'create', 'roadmap_stage', id, { name });
 
     res.json({ code: 0, message: '路线图阶段创建成功', data: { id } });
   } catch (err) {
@@ -302,7 +360,7 @@ router.post('/roadmap-stages', authRequired, adminRequired, (req, res) => {
   }
 });
 
-// PUT /courses/roadmap-stages/:stageId - 更新路线图阶段（admin）
+// PUT /courses/roadmap-stages/:stageId
 router.put('/roadmap-stages/:stageId', authRequired, adminRequired, (req, res) => {
   try {
     const db = req.db;
@@ -329,7 +387,7 @@ router.put('/roadmap-stages/:stageId', authRequired, adminRequired, (req, res) =
       db.prepare(`UPDATE roadmap_stages SET ${updates.join(', ')} WHERE id = ?`).run(...params);
     }
 
-    logActivity(db, req.user.id, 'update', 'roadmap_stage', stageId, { name: name || stage.name }, req.ip);
+    logActivity(db, req.user.id, 'update', 'roadmap_stage', stageId, { name: name || stage.name });
 
     res.json({ code: 0, message: '路线图阶段更新成功' });
   } catch (err) {
@@ -338,7 +396,7 @@ router.put('/roadmap-stages/:stageId', authRequired, adminRequired, (req, res) =
   }
 });
 
-// DELETE /courses/roadmap-stages/:stageId - 删除路线图阶段（admin）
+// DELETE /courses/roadmap-stages/:stageId
 router.delete('/roadmap-stages/:stageId', authRequired, adminRequired, (req, res) => {
   try {
     const db = req.db;
@@ -352,7 +410,7 @@ router.delete('/roadmap-stages/:stageId', authRequired, adminRequired, (req, res
     db.prepare('DELETE FROM user_roadmap_progress WHERE stage_id = ?').run(stageId);
     db.prepare('DELETE FROM roadmap_stages WHERE id = ?').run(stageId);
 
-    logActivity(db, req.user.id, 'delete', 'roadmap_stage', stageId, { name: stage.name }, req.ip);
+    logActivity(db, req.user.id, 'delete', 'roadmap_stage', stageId, { name: stage.name });
 
     res.json({ code: 0, message: '路线图阶段已删除' });
   } catch (err) {
@@ -361,7 +419,7 @@ router.delete('/roadmap-stages/:stageId', authRequired, adminRequired, (req, res
   }
 });
 
-// POST /courses/roadmap-stages/:stageId/complete - 用户手动标记阶段完成
+// POST /courses/roadmap-stages/:stageId/complete
 router.post('/roadmap-stages/:stageId/complete', authRequired, (req, res) => {
   try {
     const db = req.db;
@@ -373,7 +431,6 @@ router.post('/roadmap-stages/:stageId/complete', authRequired, (req, res) => {
       return res.status(404).json({ code: 404, message: '路线图阶段不存在' });
     }
 
-    // 检查 required_courses 是否全部完成
     let requiredCourseIds = [];
     try { requiredCourseIds = JSON.parse(stage.required_courses || '[]'); } catch (_) { requiredCourseIds = []; }
 
@@ -392,7 +449,6 @@ router.post('/roadmap-stages/:stageId/complete', authRequired, (req, res) => {
       }
     }
 
-    // 标记完成
     const existing = db.prepare(
       'SELECT * FROM user_roadmap_progress WHERE user_id = ? AND stage_id = ?'
     ).get(userId, stageId);
@@ -409,8 +465,7 @@ router.post('/roadmap-stages/:stageId/complete', authRequired, (req, res) => {
       `).run(uuidv4(), userId, stageId);
     }
 
-    logActivity(db, userId, 'complete_stage', 'roadmap_stage', stageId,
-      { stage_name: stage.name }, req.ip);
+    logActivity(db, userId, 'complete_stage', 'roadmap_stage', stageId, { stage_name: stage.name }, req.ip);
 
     res.json({ code: 0, message: '阶段已标记完成', data: { stage_id: stageId, completed: true } });
   } catch (err) {
@@ -419,9 +474,7 @@ router.post('/roadmap-stages/:stageId/complete', authRequired, (req, res) => {
   }
 });
 
-// ==================== 动态路由 (/:id) ====================
-
-// GET /courses/:id - 课程详情
+// GET /courses/:id
 router.get('/:id', authRequired, (req, res) => {
   try {
     const db = req.db;
@@ -438,7 +491,6 @@ router.get('/:id', authRequired, (req, res) => {
       return res.status(404).json({ code: 404, message: '课程不存在' });
     }
 
-    // 同时获取当前用户的学习进度
     const progress = db.prepare(
       'SELECT * FROM learning_progress WHERE user_id = ? AND course_id = ?'
     ).get(req.user.id, id);
@@ -464,7 +516,7 @@ router.get('/:id', authRequired, (req, res) => {
   }
 });
 
-// PUT /courses/:id - 更新课程（admin）
+// PUT /courses/:id
 router.put('/:id', authRequired, adminRequired, (req, res) => {
   try {
     const db = req.db;
@@ -497,8 +549,7 @@ router.put('/:id', authRequired, adminRequired, (req, res) => {
       db.prepare(`UPDATE courses SET ${updates.join(', ')} WHERE id = ?`).run(...params);
     }
 
-    logActivity(db, req.user.id, 'update', 'course', id,
-      { title: req.body.title || course.title, changed_fields: Object.keys(req.body) }, req.ip);
+    logActivity(db, req.user.id, 'update', 'course', id, { title: req.body.title || course.title }, req.ip);
 
     res.json({ code: 0, message: '课程更新成功' });
   } catch (err) {
@@ -507,7 +558,7 @@ router.put('/:id', authRequired, adminRequired, (req, res) => {
   }
 });
 
-// DELETE /courses/:id - 删除课程（admin）
+// DELETE /courses/:id
 router.delete('/:id', authRequired, adminRequired, (req, res) => {
   try {
     const db = req.db;
@@ -521,8 +572,7 @@ router.delete('/:id', authRequired, adminRequired, (req, res) => {
     db.prepare('DELETE FROM learning_progress WHERE course_id = ?').run(id);
     db.prepare('DELETE FROM courses WHERE id = ?').run(id);
 
-    logActivity(db, req.user.id, 'delete', 'course', id,
-      { title: course.title }, req.ip);
+    logActivity(db, req.user.id, 'delete', 'course', id, { title: course.title }, req.ip);
 
     res.json({ code: 0, message: '课程已删除' });
   } catch (err) {
@@ -531,7 +581,7 @@ router.delete('/:id', authRequired, adminRequired, (req, res) => {
   }
 });
 
-// GET /courses/:id/progress - 获取当前用户对某课程的学习进度
+// GET /courses/:id/progress
 router.get('/:id/progress', authRequired, (req, res) => {
   try {
     const db = req.db;
@@ -576,7 +626,7 @@ router.get('/:id/progress', authRequired, (req, res) => {
   }
 });
 
-// POST /courses/:id/progress - 更新学习进度
+// POST /courses/:id/progress
 router.post('/:id/progress', authRequired, (req, res) => {
   try {
     const db = req.db;
@@ -616,24 +666,27 @@ router.post('/:id/progress', authRequired, (req, res) => {
       `).run(uuidv4(), userId, id, parsedProgress, parsedWatchTime, isCompleted ? 1 : 0);
     }
 
-    // 完成时发放积分（仅首次完成）
     if (isCompleted) {
       const wasAlreadyCompleted = existing && existing.completed === 1;
       if (!wasAlreadyCompleted) {
-        const earnedPoints = Math.max(5, Math.floor(course.duration / 5)); // 每5分钟1分，最低5分
-        const pointLogId = uuidv4();
+        const alreadyAwarded = db.prepare(
+          `SELECT id FROM point_logs WHERE user_id = ? AND source_type = 'learning' AND source_id = ?`
+        ).get(userId, id);
+        if (!alreadyAwarded) {
+          const earnedPoints = Math.max(5, Math.floor(course.duration / 5));
+          const pointLogId = uuidv4();
 
-        db.prepare(`
-          INSERT INTO point_logs (id, user_id, points, reason, source_type, source_id)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).run(pointLogId, userId, earnedPoints, `完成课程: ${course.title}`, 'learning', id);
+          db.prepare(`
+            INSERT INTO point_logs (id, user_id, points, reason, source_type, source_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(pointLogId, userId, earnedPoints, `完成课程: ${course.title}`, 'learning', id);
 
-        db.prepare('UPDATE users SET points = points + ? WHERE id = ?').run(earnedPoints, userId);
+          db.prepare('UPDATE users SET points = points + ?, total_earned_points = total_earned_points + ? WHERE id = ?').run(earnedPoints, earnedPoints, userId);
+        }
       }
     }
 
-    logActivity(db, userId, 'update_progress', 'course', id,
-      { course_title: course.title, progress: parsedProgress, completed: isCompleted, watch_time: parsedWatchTime }, req.ip);
+    logActivity(db, userId, 'update_progress', 'course', id, { course_title: course.title, progress: parsedProgress, completed: isCompleted, watch_time: parsedWatchTime }, req.ip);
 
     res.json({
       code: 0,

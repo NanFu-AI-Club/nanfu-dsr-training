@@ -1,5 +1,5 @@
 /**
- * 南孚 DSR 销售培训系统 - 数据库初始化
+ * 终端跑店宝典 - 数据库初始化
  * sql.js (WASM SQLite) + better-sqlite3 兼容包装器
  */
 const initSqlJs = require('sql.js');
@@ -61,6 +61,21 @@ class Database {
     const row = this.prepare(`PRAGMA ${key}`).get();
     return row ? Object.values(row)[0] : null;
   }
+
+  transaction(fn) {
+    const self = this;
+    return function(...args) {
+      self._db.run('BEGIN TRANSACTION');
+      try {
+        const result = fn(...args);
+        self._db.run('COMMIT');
+        return result;
+      } catch (err) {
+        self._db.run('ROLLBACK');
+        throw err;
+      }
+    };
+  }
 }
 
 // ==================== 全局 db 引用 ====================
@@ -78,7 +93,8 @@ CREATE TABLE IF NOT EXISTS users (
   real_name TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin','sales')),
   phone TEXT, email TEXT, group_id TEXT REFERENCES groups(id),
   avatar TEXT, status TEXT DEFAULT 'active' CHECK(status IN ('active','inactive')),
-  points INTEGER DEFAULT 0, created_at DATETIME DEFAULT (datetime('now','localtime')),
+  points INTEGER DEFAULT 0, total_earned_points INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT (datetime('now','localtime')),
   updated_at DATETIME DEFAULT (datetime('now','localtime'))
 );
 CREATE TABLE IF NOT EXISTS groups (
@@ -104,6 +120,7 @@ CREATE TABLE IF NOT EXISTS kb_versions (
 CREATE TABLE IF NOT EXISTS ai_feedbacks (
   id TEXT PRIMARY KEY, conversation_id TEXT, question TEXT, answer TEXT,
   rating TEXT CHECK(rating IN ('like','dislike',NULL)),
+  sources TEXT,
   user_id TEXT REFERENCES users(id), created_at DATETIME DEFAULT (datetime('now','localtime'))
 );
 CREATE TABLE IF NOT EXISTS ai_favorites (
@@ -181,6 +198,7 @@ CREATE TABLE IF NOT EXISTS user_roadmap_progress (
 CREATE TABLE IF NOT EXISTS training_scenarios (
   id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT,
   role_type TEXT NOT NULL, scenario_prompt TEXT NOT NULL,
+  sales_goal TEXT,
   difficulty TEXT DEFAULT 'medium', tags TEXT, status TEXT DEFAULT 'active',
   created_by TEXT REFERENCES users(id), created_at DATETIME DEFAULT (datetime('now','localtime'))
 );
@@ -231,10 +249,57 @@ CREATE TABLE IF NOT EXISTS radar_dimensions (
   created_at DATETIME DEFAULT (datetime('now','localtime')),
   updated_at DATETIME DEFAULT (datetime('now','localtime'))
 );
+CREATE TABLE IF NOT EXISTS shop_products (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  image_url TEXT,
+  points_required INTEGER NOT NULL DEFAULT 0,
+  stock INTEGER NOT NULL DEFAULT 0,
+  category TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS shop_orders (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  product_id TEXT NOT NULL,
+  product_name TEXT NOT NULL,
+  points_spent INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  recipient_name TEXT,
+  recipient_phone TEXT,
+  recipient_address TEXT,
+  remark TEXT,
+  tracking_no TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS activity_logs (
   id TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id),
   action TEXT NOT NULL, module TEXT, target_type TEXT, target_id TEXT,
   detail TEXT, ip TEXT, created_at DATETIME DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS check_ins (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
+  check_date TEXT NOT NULL, points_earned INTEGER DEFAULT 0,
+  streak_count INTEGER DEFAULT 0, created_at DATETIME DEFAULT (datetime('now','localtime')),
+  UNIQUE(user_id, check_date)
+);
+CREATE TABLE IF NOT EXISTS submissions (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
+  title TEXT NOT NULL, description TEXT,
+  type TEXT NOT NULL DEFAULT 'image',
+  file_url TEXT NOT NULL DEFAULT '',
+  category TEXT NOT NULL DEFAULT 'other',
+  link_url TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  review_comment TEXT, reviewed_by TEXT REFERENCES users(id),
+  reviewed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 `;
 
@@ -260,6 +325,8 @@ const INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_training_sessions_user ON training_sessions(user_id)',
   'CREATE INDEX IF NOT EXISTS idx_training_messages_session ON training_messages(session_id)',
   'CREATE INDEX IF NOT EXISTS idx_ai_feedbacks_user ON ai_feedbacks(user_id)',
+  'CREATE INDEX IF NOT EXISTS idx_check_ins_user ON check_ins(user_id)',
+  'CREATE INDEX IF NOT EXISTS idx_check_ins_date ON check_ins(check_date)',
 ];
 
 // ==================== 种子数据 ====================
@@ -333,24 +400,29 @@ function seed(db) {
 
   // 积分规则默认数据
   const defaultRules = [
-    [uuidv4(), '每日一题（答对）', 'daily_question_correct', 10, '每天随机一道题，答对获得积分', 'zap', 1, 1],
-    [uuidv4(), '每日一题（答错）', 'daily_question_wrong', 2, '参与答题即可获得积分', 'zap', 1, 2],
-    [uuidv4(), '完成课程', 'learning_complete', 5, '每完成一门课程获得积分，最低5分，每5分钟课程时长+1分', 'book', 1, 3],
-    [uuidv4(), '考试通过', 'exam_pass', 0, '考试通过后按分数/10计算积分（如80分=8积分），0表示按公式计算', 'file', 1, 4],
-    [uuidv4(), 'AI陪练', 'training_complete', 10, '完成陪练场景获得积分奖励', 'message', 1, 5],
-    [uuidv4(), '管理员调整', 'manual_adjust', 0, '管理员可手动为用户增减积分', 'user', 1, 6],
+    [uuidv4(), '每日签到（基础）', 'check_in', 5, '每天签到即可获得积分，连续签到越多奖励越多', 'calendar', 1, 1],
+    [uuidv4(), '连续签到3天加成', 'check_in_streak_3', 10, '连续签到满3天额外奖励', 'flame', 1, 2],
+    [uuidv4(), '连续签到7天加成', 'check_in_streak_7', 20, '连续签到满7天额外奖励', 'fire', 1, 3],
+    [uuidv4(), '连续签到30天加成', 'check_in_streak_30', 50, '连续签到满30天额外奖励', 'crown', 1, 4],
+    [uuidv4(), '每日一题（答对）', 'daily_question_correct', 10, '每天随机一道题，答对获得积分', 'zap', 0, 5],
+    [uuidv4(), '每日一题（答错）', 'daily_question_wrong', 2, '参与答题即可获得积分', 'zap', 0, 6],
+    [uuidv4(), '完成课程', 'learning_complete', 5, '每完成一门课程获得积分，最低5分，每5分钟课程时长+1分', 'book', 1, 7],
+    [uuidv4(), '考试通过', 'exam_pass', 0, '考试通过后按分数/10计算积分（如80分=8积分），0表示按公式计算', 'file', 1, 8],
+    [uuidv4(), 'AI陪练', 'training_complete', 10, '完成陪练场景获得积分奖励', 'message', 1, 9],
+    [uuidv4(), '风采投稿通过', 'submission_approved', 5, '风采投稿审核通过获得积分奖励', 'camera', 1, 10],
+    [uuidv4(), '管理员调整', 'manual_adjust', 0, '管理员可手动为用户增减积分', 'user', 1, 11],
   ];
   const insertRule = db.prepare('INSERT OR IGNORE INTO point_rules (id, action, source_type, points, description, icon, enabled, sort_order) VALUES (?,?,?,?,?,?,?,?)');
   defaultRules.forEach(r => insertRule.run(...r));
 
   // 雷达维度默认数据
   const defaultDimensions = [
-    [uuidv4(), 'product_knowledge', '产品知识', '电池产品参数、卖点、竞品对比的掌握程度', 'book', 1.0, 1, 1],
+    [uuidv4(), 'product_knowledge', '产品知识', '产品参数、卖点、竞品对比的掌握程度', 'book', 1.0, 1, 1],
     [uuidv4(), 'sales_skills', '销售技巧', 'SPIN提问、FAB法则、促成话术等销售技能', 'trending', 1.0, 1, 2],
     [uuidv4(), 'communication', '沟通能力', '倾听、表达、共情及非暴力沟通能力', 'message', 1.0, 1, 3],
-    [uuidv4(), 'customer_management', '客户管理', '客户分级、跟进节奏、客情维护与售后处理', 'users', 1.0, 1, 4],
-    [uuidv4(), 'policy_understanding', '制度理解', '公司政策、价格体系、合规制度的理解与执行', 'file', 1.0, 1, 5],
-    [uuidv4(), 'learning_attitude', '学习态度', '主动学习意愿、参与度、学习效率与坚持度', 'star', 1.0, 1, 6],
+    [uuidv4(), 'customer_management', '客户管理', '客户分级、跟进节奏与售后处理', 'users', 1.0, 1, 4],
+    [uuidv4(), 'customer_care', '客情维护', '客户关系维护、客情建立与长期合作经营', 'heart', 1.0, 1, 5],
+    [uuidv4(), 'learning_attitude', '学习时长', '课程完成率、学习时长与学习投入度', 'clock', 1.0, 1, 6],
   ];
   const insertDim = db.prepare('INSERT OR IGNORE INTO radar_dimensions (id, key, name, description, icon, weight, enabled, sort_order) VALUES (?,?,?,?,?,?,?,?)');
   defaultDimensions.forEach(d => insertDim.run(...d));
@@ -375,6 +447,55 @@ async function initDatabase(reset = false, withSeed = false) {
 
   if (existingData) {
     sqlDb = new SQL.Database(existingData);
+    // 已有数据库也执行建表语句（IF NOT EXISTS），确保新增的表能自动创建
+    const statements = SCHEMA.split(';').filter(s => s.trim());
+    statements.forEach(sql => { try { sqlDb.run(sql); } catch (e) { /* 忽略已存在表的错误 */ } });
+    // 创建索引
+    INDEXES.forEach(sql => { try { sqlDb.run(sql); } catch (e) {} });
+    // 迁移：为已有表新增列
+    const migrations = [
+      { table: 'training_scenarios', column: 'sales_goal', sql: 'ALTER TABLE training_scenarios ADD COLUMN sales_goal TEXT' },
+      { table: 'shop_orders', column: 'tracking_no', sql: 'ALTER TABLE shop_orders ADD COLUMN tracking_no TEXT' },
+      { table: 'submissions', column: 'category', sql: "ALTER TABLE submissions ADD COLUMN category TEXT NOT NULL DEFAULT 'other'" },
+      { table: 'submissions', column: 'link_url', sql: "ALTER TABLE submissions ADD COLUMN link_url TEXT DEFAULT ''" },
+      { table: 'users', column: 'total_earned_points', sql: 'ALTER TABLE users ADD COLUMN total_earned_points INTEGER DEFAULT 0' },
+      { table: 'ai_feedbacks', column: 'sources', sql: 'ALTER TABLE ai_feedbacks ADD COLUMN sources TEXT' },
+    ];
+    migrations.forEach(m => {
+      try {
+        const cols = sqlDb.exec(`PRAGMA table_info(${m.table})`);
+        const hasColumn = cols.length && cols[0].values.some(row => row[1] === m.column);
+        if (!hasColumn) {
+          sqlDb.run(m.sql);
+          console.log(`✅ 迁移: ${m.table} 新增列 ${m.column}`);
+        }
+      } catch (e) { /* 列已存在或表不存在，忽略 */ }
+    });
+    // 迁移：插入新增的积分规则（签到）
+    const newRules = [
+      ['check_in', '每日签到（基础）', 5, '每天签到即可获得积分，连续签到越多奖励越多', 'calendar', 1, 1],
+      ['check_in_streak_3', '连续签到3天加成', 10, '连续签到满3天额外奖励', 'flame', 1, 2],
+      ['check_in_streak_7', '连续签到7天加成', 20, '连续签到满7天额外奖励', 'fire', 1, 3],
+      ['check_in_streak_30', '连续签到30天加成', 50, '连续签到满30天额外奖励', 'crown', 1, 4],
+    ];
+    // 迁移：插入风采投稿通过积分规则
+    const submissionRule = ['submission_approved', '风采投稿通过', 5, '风采投稿审核通过获得积分奖励', 'camera', 1, 11];
+    const allNewRules = [...newRules, submissionRule];
+    allNewRules.forEach(r => {
+      try {
+        const exists = sqlDb.exec(`SELECT 1 FROM point_rules WHERE source_type = '${r[0]}'`);
+        if (!exists.length || !exists[0].values.length) {
+          const ruleId = uuidv4();
+          sqlDb.run(`INSERT INTO point_rules (id, source_type, action, points, description, icon, enabled, sort_order, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,datetime('now','localtime'),datetime('now','localtime'))`,
+            [ruleId, r[0], r[1], r[2], r[3], r[4], r[5], r[6]]);
+          console.log(`✅ 迁移: 新增积分规则 ${r[1]}`);
+        }
+      } catch (e) { /* 忽略 */ }
+    });
+    // 初始化现有用户的 total_earned_points（等于当前积分）
+    try {
+      sqlDb.run("UPDATE users SET total_earned_points = points WHERE total_earned_points = 0 AND points > 0");
+    } catch (e) { /* 忽略 */ }
   } else {
     sqlDb = new SQL.Database();
     // 执行建表

@@ -78,7 +78,7 @@ router.get('/export', authRequired, adminRequired, (req, res) => {
 
     const list = questions.map(parseQuestion);
 
-    logActivity(db, req.user.id, 'export', 'questions', null, { count: list.length, type, category }, req.ip);
+    logActivity(db, req.user.id, 'export', 'questions', null, JSON.stringify({ count: list.length, type, category }));
 
     res.json({ code: 0, data: list });
   } catch (err) {
@@ -137,7 +137,7 @@ router.post('/batch', authRequired, adminRequired, (req, res) => {
     }
 
     logActivity(db, req.user.id, 'batch_import', 'questions', null,
-      { total: items.length, success: successCount, fail: failCount }, req.ip);
+      JSON.stringify({ total: items.length, success: successCount, fail: failCount }), req.ip);
 
     res.json({
       code: 0,
@@ -326,7 +326,7 @@ router.post('/daily/answer', authRequired, (req, res) => {
     const earnedPoints = isCorrect ? (correctRule?.points || 10) : (wrongRule?.points || 2);
     const now = new Date().toISOString();
 
-    db.prepare('UPDATE users SET points = points + ? WHERE id = ?').run(earnedPoints, userId);
+    db.prepare('UPDATE users SET points = points + ?, total_earned_points = total_earned_points + ? WHERE id = ?').run(earnedPoints, earnedPoints, userId);
     db.prepare(`
       INSERT INTO point_logs (id, user_id, points, reason, source_type, source_id, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -337,7 +337,7 @@ router.post('/daily/answer', authRequired, (req, res) => {
 
     const { logActivity } = require('./users');
     logActivity(db, userId, 'daily_question', 'question', question_id,
-      { question_id, isCorrect, earnedPoints }, req.ip);
+      JSON.stringify({ question_id, isCorrect, earnedPoints }));
 
     // 判断题显示友好文本
     const friendlyAnswer = question.type === 'judge'
@@ -405,7 +405,7 @@ router.post('/', authRequired, adminRequired, (req, res) => {
     );
 
     logActivity(db, req.user.id, 'create', 'question', id,
-      { content: content.substring(0, 100), type }, req.ip);
+      JSON.stringify({ content: content.substring(0, 100), type }), req.ip);
 
     res.json({ code: 0, message: '题目创建成功', data: { id } });
   } catch (err) {
@@ -450,7 +450,7 @@ router.put('/:id', authRequired, adminRequired, (req, res) => {
     }
 
     logActivity(db, req.user.id, 'update', 'question', id,
-      { content: (content || question.content).substring(0, 100), changed_fields: Object.keys(req.body) }, req.ip);
+      JSON.stringify({ content: (content || question.content).substring(0, 100), changed_fields: Object.keys(req.body) }), req.ip);
 
     res.json({ code: 0, message: '题目更新成功' });
   } catch (err) {
@@ -477,7 +477,7 @@ router.delete('/:id', authRequired, adminRequired, (req, res) => {
     db.prepare('DELETE FROM questions WHERE id = ?').run(id);
 
     logActivity(db, req.user.id, 'delete', 'question', id,
-      { content: question.content.substring(0, 100) }, req.ip);
+      JSON.stringify({ content: question.content.substring(0, 100) }), req.ip);
 
     res.json({ code: 0, message: '题目已删除' });
   } catch (err) {

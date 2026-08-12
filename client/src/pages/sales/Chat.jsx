@@ -3,7 +3,7 @@ import {
   Send, Menu, ChevronLeft, Plus, ThumbsUp, ThumbsDown,
   Star, MessageSquare, Trash2, Loader2, AlertCircle, BookOpen,
   Sparkles, Lightbulb, Zap, Search, ChevronRight, X,
-  Mic, MicOff, Volume2,
+  Mic, MicOff, Volume2, VolumeX,
 } from 'lucide-react';
 import api from '../../api';
 
@@ -32,6 +32,7 @@ function Chat() {
   const [favLoading, setFavLoading] = useState({});
   const [feedbackLoading, setFeedbackLoading] = useState({});
   const [historyLoading, setHistoryLoading] = useState(false);
+  const btnRefs = useRef({});
   const [error, setError] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [suggestions, setSuggestions] = useState([]);
@@ -44,6 +45,21 @@ function Chat() {
   const ttsAudioRef = useRef(null);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+
+  // 停止所有语音播放
+  const stopAllTTS = useCallback(() => {
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    if (ttsAudioRef.current) {
+      ttsAudioRef.current.pause();
+      ttsAudioRef.current = null;
+    }
+    setTtsPlaying({});
+  }, []);
+
+  // 组件卸载时停止所有语音
+  useEffect(() => {
+    return () => stopAllTTS();
+  }, [stopAllTTS]);
 
   // 同步到 sessionStorage（debounce 避免频繁写入卡顿）
   const saveTimerRef = useRef(null);
@@ -128,14 +144,16 @@ function Chat() {
       const deduped = [];
       for (const item of items) {
         if (item.question) {
-          deduped.push({ id: item.id + '_q', role: 'user', content: item.question, sources: item.sources || [], isFavorite: !!item.is_favorite, feedback: item.rating || null });
+          deduped.push({ id: item.id + '_q', dbId: item.id, favoriteId: item.favorite_id || null, role: 'user', content: item.question, sources: item.sources || [], isFavorite: !!item.is_favorite, feedback: item.rating || null });
         }
         if (item.answer) {
-          deduped.push({ id: item.id + '_a', role: 'assistant', content: item.answer, sources: item.sources || [], isFavorite: !!item.is_favorite, feedback: item.rating || null });
+          deduped.push({ id: item.id + '_a', dbId: item.id, favoriteId: item.favorite_id || null, role: 'assistant', content: item.answer, sources: item.sources || [], isFavorite: !!item.is_favorite, feedback: item.rating || null });
         }
       }
       const msgs = items.map((item) => ({
         id: item.id,
+        dbId: item.id,
+        favoriteId: item.favorite_id || null,
         role: item.role || (item.question ? 'user' : 'assistant'),
         content: item.content || item.question || item.answer || '',
         sources: item.sources || [],
@@ -188,8 +206,6 @@ function Chat() {
 
   // ==================== 语音输入（浏览器 SpeechRecognition，兜底火山 ASR） ====================
   const startRecording = async () => {
-    // 检测是否是 HTTP（录音在多数手机浏览器上需要 HTTPS）
-    const isHTTP = location.protocol === 'http:';
     const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 
     // 桌面端 Chrome/Edge 优先用浏览器内置语音识别
@@ -232,13 +248,19 @@ function Chat() {
       }
     }
 
-    // 手机端 / 不支持 SpeechRecognition → 录音上传到火山 ASR
-    if (isHTTP && isMobile) {
-      alert('手机端语音输入需要 HTTPS 访问。当前是 HTTP 连接，浏览器会阻止麦克风。\n\n临时方案：请用打字输入，或换电脑端 Chrome 浏览器使用语音。');
-      return;
-    }
-
+    // 手机端 / 不支持 SpeechRecognition → 录音上传到腾讯云ASR
     try {
+      // HTTPS 检查：mediaDevices 只能在安全上下文中使用
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        const isHTTP = location.protocol === 'http:';
+        if (isHTTP) {
+          alert('麦克风需要 HTTPS 安全连接。\n\n请在浏览器地址栏输入：\nhttps://1.15.172.36\n\n（首次打开会提示"不安全"，点击"高级"→"继续访问"即可）');
+        } else {
+          alert('当前浏览器不支持麦克风功能，请使用 Chrome/Safari/Edge 浏览器');
+        }
+        return;
+      }
+
       // 检测支持的音频格式
       let mimeType = 'audio/webm;codecs=opus';
       if (!MediaRecorder.isTypeSupported(mimeType)) {
@@ -297,9 +319,10 @@ function Chat() {
       console.error('麦克风启动失败:', err);
       let errMsg;
       if (err.name === 'NotAllowedError') {
+        const isHTTP = location.protocol === 'http:';
         errMsg = isHTTP
-          ? '录音需要 HTTPS 访问，当前是 HTTP 连接'
-          : '请允许麦克风权限后重试（浏览器设置中开启麦克风权限）';
+          ? '麦克风需要HTTPS安全连接。\n\n请访问 https://1.15.172.36\n（首次打开需点击"高级"→"继续访问"）'
+          : '请允许麦克风权限后重试（在浏览器设置中开启麦克风权限）';
       } else if (err.name === 'NotFoundError') {
         errMsg = '未检测到麦克风设备';
       } else {
@@ -435,6 +458,9 @@ function Chat() {
     const text = (overrideText || inputValue).trim();
     if (!text || loading) return;
 
+    // 发送新问题时停止所有正在播放的语音
+    stopAllTTS();
+
     const userMsg = {
       id: `user-${Date.now()}`,
       role: 'user',
@@ -456,8 +482,11 @@ function Chat() {
       });
 
       const data = res.data || res;
+      const feedbackId = data.id;
       const aiMsg = {
-        id: data.id || `ai-${Date.now()}`,
+        id: feedbackId ? (feedbackId + '_a') : `ai-${Date.now()}`,
+        dbId: feedbackId || null,
+        favoriteId: null,
         role: 'assistant',
         content: data.answer || data.reply || data.content || '',
         sources: data.sources || [],
@@ -489,37 +518,90 @@ function Chat() {
     }
   };
 
+  // Web Animations API - 按钮点击特效
+  const playAnimation = useCallback((msgId, type) => {
+    const el = btnRefs.current[`${msgId}-${type}`];
+    if (!el) return;
+
+    if (type === 'like') {
+      el.animate([
+        { transform: 'scale(1)', offset: 0 },
+        { transform: 'scale(1.35)', offset: 0.3 },
+        { transform: 'scale(0.9)', offset: 0.6 },
+        { transform: 'scale(1)', offset: 1 },
+      ], { duration: 480, easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)' });
+    } else if (type === 'dislike') {
+      el.animate([
+        { transform: 'translateX(0)', offset: 0 },
+        { transform: 'translateX(-5px)', offset: 0.15 },
+        { transform: 'translateX(5px)', offset: 0.3 },
+        { transform: 'translateX(-4px)', offset: 0.45 },
+        { transform: 'translateX(4px)', offset: 0.6 },
+        { transform: 'translateX(-2px)', offset: 0.75 },
+        { transform: 'translateX(0)', offset: 1 },
+      ], { duration: 450, easing: 'ease' });
+    } else if (type === 'star') {
+      el.animate([
+        { transform: 'scale(1) rotate(0deg)', offset: 0 },
+        { transform: 'scale(1.5) rotate(180deg)', offset: 0.4 },
+        { transform: 'scale(1) rotate(360deg)', offset: 1 },
+      ], { duration: 580, easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)' });
+    }
+  }, []);
+
   const handleFeedback = async (messageId, type) => {
+    const msg = messages.find(m => m.id === messageId);
+    const apiId = msg?.dbId || messageId;
     try {
       setFeedbackLoading((prev) => ({ ...prev, [messageId]: type }));
-      await api.post(`/ai/feedback/${messageId}`, { rating: type });
+      await api.post(`/ai/feedback/${apiId}`, { rating: type });
       setMessages((prev) =>
         prev.map((m) =>
           m.id === messageId ? { ...m, feedback: m.feedback === type ? null : type } : m
         )
       );
+      playAnimation(messageId, type);
     } catch (err) {
       console.error('反馈失败:', err);
+      alert('反馈操作失败: ' + (err?.message || '请重试'));
     } finally {
       setFeedbackLoading((prev) => ({ ...prev, [messageId]: null }));
     }
   };
 
   const handleFavorite = async (messageId, currentFav) => {
+    const msg = messages.find(m => m.id === messageId);
+    const dbId = msg?.dbId || messageId;
+    const favoriteId = msg?.favoriteId || null;
     try {
       setFavLoading((prev) => ({ ...prev, [messageId]: true }));
       if (currentFav) {
-        await api.delete(`/ai/favorites/${messageId}`);
+        // DELETE 用 ai_favorites 表的 id
+        if (!favoriteId) throw new Error('favoriteId 缺失');
+        await api.delete(`/ai/favorites/${favoriteId}`);
       } else {
-        await api.post(`/ai/favorites/${messageId}`);
+        // POST 用 ai_feedbacks 表的 id; 返回值包含新创建的 ai_favorites.id
+        const res = await api.post(`/ai/favorites/${dbId}`);
+        const newFavId = res?.data?.favorite_id || res?.favorite_id;
+        if (newFavId) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === messageId ? { ...m, isFavorite: true, favoriteId: newFavId } : m
+            )
+          );
+          playAnimation(messageId, 'star');
+          return;
+        }
       }
       setMessages((prev) =>
         prev.map((m) =>
           m.id === messageId ? { ...m, isFavorite: !currentFav } : m
         )
       );
+      playAnimation(messageId, 'star');
     } catch (err) {
       console.error('收藏操作失败:', err);
+      alert('收藏操作失败: ' + (err?.message || '请重试'));
     } finally {
       setFavLoading((prev) => ({ ...prev, [messageId]: false }));
     }
@@ -533,10 +615,32 @@ function Chat() {
     });
   };
 
-  /* ========== 渲染 AI 回复内容（支持 Markdown 基础格式） ========== */
+  /* ========== 过滤 emoji（防止显示为 □□）========== */
+  const filterEmoji = useCallback((text) => {
+    if (!text) return text;
+    return text
+      .replace(/[\u{1F600}-\u{1F64F}]/gu, '')
+      .replace(/[\u{1F300}-\u{1F5FF}]/gu, '')
+      .replace(/[\u{1F680}-\u{1F6FF}]/gu, '')
+      .replace(/[\u{1F700}-\u{1F77F}]/gu, '')
+      .replace(/[\u{1F780}-\u{1F7FF}]/gu, '')
+      .replace(/[\u{1F800}-\u{1F8FF}]/gu, '')
+      .replace(/[\u{1F900}-\u{1F9FF}]/gu, '')
+      .replace(/[\u{1FA00}-\u{1FA6F}]/gu, '')
+      .replace(/[\u{1FA70}-\u{1FAFF}]/gu, '')
+      .replace(/[\u{2600}-\u{26FF}]/gu, '')
+      .replace(/[\u{2700}-\u{27BF}]/gu, '')
+      .replace(/[\u{FE00}-\u{FE0F}]/gu, '')
+      .replace(/[\u{200D}]/gu, '')
+      .replace(/\uFFFD/g, ''); // 替换字符
+  }, []);
+
+  /* ========== 渲染 AI 回复内容（支持 Markdown 基础格式）========== */
   const renderContent = useCallback((content) => {
     if (!content) return null;
-    const lines = content.split('\n');
+    // 先过滤 emoji
+    const filtered = filterEmoji(content);
+    const lines = filtered.split('\n');
     return lines.map((line, i) => {
       const parts = line.split(/(\*\*[^*]+\*\*)/g);
       const rendered = parts.map((part, j) => {
@@ -552,12 +656,12 @@ function Chat() {
         </span>
       );
     });
-  }, []);
+  }, [filterEmoji]);
 
   const isEmpty = useMemo(() => messages.length === 0 && !loading, [messages.length, loading]);
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 md:flex-row">
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden md:flex-row">
       {/* ===== 侧边栏：仅桌面端显示 ===== */}
       <aside
         className={`bg-white/80 backdrop-blur-xl border-r border-warm-100/60 flex-col shrink-0 transition-all duration-300 overflow-hidden hidden md:flex ${
@@ -623,7 +727,7 @@ function Chat() {
       </aside>
 
       {/* ===== 主对话区域 ===== */}
-      <div className="flex-1 flex flex-col min-w-0 bg-gradient-to-b from-sky-50/30 via-white to-warm-50/30">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden bg-gradient-to-b from-sky-50/30 via-white to-warm-50/30">
         {/* 顶部标题栏：仅桌面端显示 */}
         <div className="hidden md:flex bg-white/70 backdrop-blur-xl border-b border-warm-100/60 px-4 py-3 items-center gap-3 shrink-0">
           <button
@@ -638,17 +742,27 @@ function Chat() {
               <Sparkles size={16} className="text-white" />
             </div>
             <div>
-              <h2 className="font-bold text-sm text-warm-900">南孚智囊小助手</h2>
+              <h2 className="font-bold text-sm text-warm-900">智囊小助手</h2>
               <p className="text-[11px] text-warm-400">基于知识库和题库的 AI 智能回答</p>
             </div>
           </div>
+          {Object.values(ttsPlaying).some(v => v) && (
+            <button
+              onClick={stopAllTTS}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 transition text-sm font-medium shrink-0"
+              title="停止所有语音播放"
+            >
+              <VolumeX size={15} />
+              停止播放
+            </button>
+          )}
         </div>
 
         {/* 消息区域 */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
           {/* 手机端：对话历史入口 + 新建对话 */}
           <div className="md:hidden flex items-center justify-between mb-3">
-            <span className="text-xs text-warm-400 font-medium">南孚智囊小助手</span>
+            <span className="text-xs text-warm-400 font-medium">智囊小助手</span>
             <div className="flex items-center gap-1">
               <button
                 onClick={newConversation}
@@ -726,9 +840,9 @@ function Chat() {
               <div className="w-12 h-12 md:w-20 md:h-20 bg-gradient-to-br from-sky-400 to-primary-600 rounded-2xl md:rounded-3xl flex items-center justify-center shadow-soft-lg mb-3 md:mb-6">
                 <Sparkles size={22} className="text-white md:size-36" />
               </div>
-              <h3 className="text-base md:text-2xl font-bold text-warm-900 mb-1 md:mb-2">你好，我是南孚智答助手</h3>
+              <h3 className="text-base md:text-2xl font-bold text-warm-900 mb-1 md:mb-2">你好，我是智答助手</h3>
               <p className="text-warm-500 text-xs md:text-sm mb-4 md:mb-8 text-center max-w-md px-2 hidden md:block">
-                我可以帮助你解答关于南孚产品、销售技巧、公司制度等方面的问题。<br />
+                我可以帮助你解答关于产品、销售技巧、公司制度等方面的问题。<br />
                 试试下面的问题，或直接输入你想了解的内容。
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-lg px-2 md:px-0">
@@ -806,56 +920,65 @@ function Chat() {
 
                     {/* AI 回复操作栏 */}
                     {msg.role === 'assistant' && (
-                      <div className="flex items-center gap-0.5 mt-2">
+                      <div className="flex flex-wrap items-center gap-2 mt-3">
+                        {/* 点赞 */}
                         <button
+                          ref={(el) => { btnRefs.current[`${msg.id}-like`] = el; }}
                           onClick={() => handleFeedback(msg.id, 'like')}
                           disabled={!!feedbackLoading[msg.id]}
-                          className={`p-1.5 rounded-lg transition-all duration-200 ${
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all duration-200 active:scale-95 ${
                             msg.feedback === 'like'
-                              ? 'text-primary-600 bg-primary-50'
-                              : 'text-warm-300 hover:text-primary-600 hover:bg-primary-50'
+                              ? 'bg-blue-50 text-blue-600 border-blue-200 shadow-sm'
+                              : 'bg-white/80 text-warm-500 border-warm-200 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50/50'
                           }`}
                           title="有帮助"
                         >
                           {feedbackLoading[msg.id] === 'like' ? (
-                            <Loader2 size={13} className="animate-spin" />
+                            <Loader2 size={14} className="animate-spin" />
                           ) : (
-                            <ThumbsUp size={13} />
+                            <ThumbsUp size={14} className={msg.feedback === 'like' ? 'fill-blue-500 text-blue-500' : ''} />
                           )}
+                          点赞
                         </button>
 
+                        {/* 不点赞 */}
                         <button
+                          ref={(el) => { btnRefs.current[`${msg.id}-dislike`] = el; }}
                           onClick={() => handleFeedback(msg.id, 'dislike')}
                           disabled={!!feedbackLoading[msg.id]}
-                          className={`p-1.5 rounded-lg transition-all duration-200 ${
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all duration-200 active:scale-95 ${
                             msg.feedback === 'dislike'
-                              ? 'text-rose-500 bg-rose-50'
-                              : 'text-warm-300 hover:text-rose-500 hover:bg-rose-50'
+                              ? 'bg-rose-50 text-rose-600 border-rose-200 shadow-sm'
+                              : 'bg-white/80 text-warm-500 border-warm-200 hover:border-rose-300 hover:text-rose-600 hover:bg-rose-50/50'
                           }`}
                           title="待改进"
                         >
                           {feedbackLoading[msg.id] === 'dislike' ? (
-                            <Loader2 size={13} className="animate-spin" />
+                            <Loader2 size={14} className="animate-spin" />
                           ) : (
-                            <ThumbsDown size={13} />
+                            <ThumbsDown size={14} className={msg.feedback === 'dislike' ? 'fill-rose-500 text-rose-500' : ''} />
                           )}
+                          踩
                         </button>
 
+                        {/* 收藏 */}
                         <button
+                          ref={(el) => { btnRefs.current[`${msg.id}-star`] = el; }}
                           onClick={() => handleFavorite(msg.id, msg.isFavorite)}
                           disabled={favLoading[msg.id]}
-                          className={`p-1.5 rounded-lg transition-all duration-200 ${
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all duration-200 active:scale-95 ${
                             msg.isFavorite
-                              ? 'text-amber-500 bg-amber-50'
-                              : 'text-warm-300 hover:text-amber-500 hover:bg-amber-50'
+                              ? 'bg-amber-50 text-amber-600 border-amber-200 shadow-sm'
+                              : 'bg-white/80 text-warm-500 border-warm-200 hover:border-amber-300 hover:text-amber-600 hover:bg-amber-50/50'
                           }`}
                           title={msg.isFavorite ? '取消收藏' : '收藏'}
                         >
                           {favLoading[msg.id] ? (
-                            <Loader2 size={13} className="animate-spin" />
+                            <Loader2 size={14} className="animate-spin" />
                           ) : (
-                            <Star size={13} fill={msg.isFavorite ? 'currentColor' : 'none'} />
+                            <Star size={14} fill={msg.isFavorite ? 'currentColor' : 'none'} />
                           )}
+                          收藏
                         </button>
 
                         {/* TTS 语音播报 */}

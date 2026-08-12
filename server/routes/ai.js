@@ -5,7 +5,7 @@
 const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
-const { exec } = require('child_process');
+const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -26,10 +26,23 @@ function logActivity(db, userId, action, targetType, targetId, detail, ip) {
  */
 function searchKnowledgeBase(db, question) {
   // 提取中文关键词（简单分词：按常见分隔符切分，过滤短词）
-  const keywords = question
+  let keywords = question
     .split(/[，。！？；：、\s,\.!\?;:]+/)
-    .filter(w => w.length >= 2)
-    .slice(0, 5);
+    .filter(w => w.length >= 2);
+
+  // 补充：如果问题较长，尝试提取更多关键词
+  if (keywords.length < 3 && question.length > 4) {
+    // 尝试2字分词
+    for (let i = 0; i < question.length - 1; i++) {
+      const pair = question.substring(i, i + 2);
+      if (!/[\s，。！？；：、]/.test(pair) && !keywords.includes(pair)) {
+        keywords.push(pair);
+      }
+    }
+  }
+
+  // 去重并限制数量
+  keywords = [...new Set(keywords)].slice(0, 8);
 
   if (keywords.length === 0) return [];
 
@@ -43,6 +56,7 @@ function searchKnowledgeBase(db, question) {
     SELECT d.id, d.title, d.content
     FROM kb_documents d
     WHERE d.status = 'published' AND d.is_current = 1 AND (${conditions})
+    ORDER BY d.updated_at DESC
     LIMIT 5
   `).all(...params);
 
@@ -83,11 +97,11 @@ function searchQuestionBank(db, question) {
 /**
  * 构建知识库上下文文本
  */
-function buildContext(docs, maxLength = 2000) {
+function buildContext(docs, maxLength = 3000) {
   if (docs.length === 0) return '';
-  let context = '以下是与问题相关的知识库内容：\n\n';
+  let context = '\n以下是相关的参考资料，请参考这些内容回答问题：\n\n';
   for (const doc of docs) {
-    context += `【${doc.title}】\n${doc.content.substring(0, 600)}\n\n`;
+    context += `参考：${doc.title}\n${doc.content.substring(0, 800)}\n\n`;
   }
   return context.substring(0, maxLength);
 }
@@ -114,6 +128,28 @@ function buildQuestionContext(questions, maxLength = 1500) {
 }
 
 /**
+ * 过滤掉文本中的 emoji 和特殊字符（防止显示为 □□）
+ */
+function filterEmoji(text) {
+  if (!text) return text;
+  // 过滤掉 emoji 和其他特殊符号（保留中文、英文、数字、常用标点）
+  return text
+    .replace(/[\u{1F600}-\u{1F64F}]/gu, '')  // 表情符号
+    .replace(/[\u{1F300}-\u{1F5FF}]/gu, '')  // 符号和象形文字
+    .replace(/[\u{1F680}-\u{1F6FF}]/gu, '')  // 交通和地图符号
+    .replace(/[\u{1F700}-\u{1F77F}]/gu, '')  // 炼金术符号
+    .replace(/[\u{1F780}-\u{1F7FF}]/gu, '')  // 几何图形扩展
+    .replace(/[\u{1F800}-\u{1F8FF}]/gu, '')  // 补充箭头-C
+    .replace(/[\u{1F900}-\u{1F9FF}]/gu, '')  // 补充符号和象形文字
+    .replace(/[\u{1FA00}-\u{1FA6F}]/gu, '')  // 国际象棋符号
+    .replace(/[\u{1FA70}-\u{1FAFF}]/gu, '')  // 符号和象形文字扩展-A
+    .replace(/[\u{2600}-\u{26FF}]/gu, '')    // 杂项符号
+    .replace(/[\u{2700}-\u{27BF}]/gu, '')    // 装饰符号
+    .replace(/[\u{FE00}-\u{FE0F}]/gu, '')    // 变体选择符
+    .replace(/[\u{200D}]/gu, '');            // 零宽连接符
+}
+
+/**
  * 基于知识库和题库生成智能兜底回复（AI不可用时的降级方案）
  */
 function generateMockResponse(question, docs, relatedQuestions, systemPrompt, errorReason) {
@@ -128,7 +164,7 @@ function generateMockResponse(question, docs, relatedQuestions, systemPrompt, er
 
   // AI 状态提示
   if (errorReason) {
-    answer += `> :warning: **AI 模型暂不可用**：${errorReason}\n`;
+    answer += `> [提示] AI 模型暂不可用：${errorReason}\n`;
     answer += `> 当前展示的是基于知识库和题库的检索结果，管理员可在「AI配置」中修正模型名称后激活。\n\n`;
   }
 
@@ -189,7 +225,7 @@ function generateMockResponse(question, docs, relatedQuestions, systemPrompt, er
     answer += `AI 模型未生效（${errorReason}），请在管理后台「AI配置」中检查模型名称和 API Key。`;
   }
 
-  return answer;
+  return filterEmoji(answer);
 }
 
 /**
@@ -210,7 +246,7 @@ async function callAIProvider(config, messages) {
     model: config.model || 'gpt-4o-mini',
     messages: messages,
     temperature: config.temperature !== undefined ? config.temperature : 0.7,
-    max_tokens: config.max_tokens || 2048,
+    max_tokens: config.max_tokens || 16384,
   });
 
   return new Promise((resolve, reject) => {
@@ -231,16 +267,36 @@ async function callAIProvider(config, messages) {
       let body = '';
       aiRes.on('data', (chunk) => { body += chunk; });
       aiRes.on('end', () => {
+        console.log(`[AI] HTTP ${aiRes.statusCode} from ${apiUrl}, model=${config.model || 'gpt-4o-mini'}`);
+        console.log(`[AI] Raw response (first 500 chars):`, body.substring(0, 500));
         try {
           const result = JSON.parse(body);
           if (result.choices && result.choices[0] && result.choices[0].message) {
-            resolve(result.choices[0].message.content);
+            const msg = result.choices[0].message;
+            const content = msg.content;
+            // 推理模型（如 deepseek-v4-flash）在 max_tokens 不够时会只输出推理过程
+            // 这种情况应该报错，而不是用推理过程替代最终回答
+            if (!content || !content.trim()) {
+              const finishReason = result.choices[0].finish_reason;
+              console.warn(`[AI] WARNING: model returned empty content! finish_reason=${finishReason}, model=${config.model || 'gpt-4o-mini'}`);
+              if (finishReason === 'length') {
+                reject(new Error('max_tokens 不足，模型未能完成输出。请提高 max_tokens 配置值（建议 16384 或更高）'));
+              } else {
+                console.warn(`[AI] Full response:`, JSON.stringify(result).substring(0, 1000));
+                reject(new Error('AI 模型返回了空内容'));
+              }
+              return;
+            }
+            resolve(filterEmoji(content));
           } else if (result.error) {
+            console.error(`[AI] API error:`, JSON.stringify(result.error));
             reject(new Error(result.error.message || 'AI API error'));
           } else {
+            console.error(`[AI] Unexpected response format:`, JSON.stringify(result).substring(0, 500));
             reject(new Error('AI API 返回格式异常'));
           }
         } catch (e) {
+          console.error(`[AI] JSON parse failed, body:`, body.substring(0, 500));
           reject(new Error(`AI API 响应解析失败: ${body.substring(0, 200)}`));
         }
       });
@@ -263,10 +319,10 @@ router.get('/configs', authRequired, adminRequired, (req, res) => {
       SELECT * FROM ai_configs ORDER BY created_at DESC
     `).all();
 
-    // Mask API key
+    // 安全：完全隐藏 API key，不返回任何部分
     const list = configs.map(c => ({
       ...c,
-      api_key: c.api_key ? c.api_key.substring(0, 8) + '****' + c.api_key.substring(c.api_key.length - 4) : null,
+      api_key: c.api_key ? '********' : null, // 完全隐藏，不泄露任何字符
       is_active: c.is_active === 1
     }));
 
@@ -309,7 +365,7 @@ router.post('/configs', authRequired, adminRequired, (req, res) => {
       db.prepare('UPDATE ai_configs SET is_active = 0 WHERE id != ?').run(id);
     }
 
-    logActivity(db, req.user.id, 'create', 'ai_config', id, { provider }, req.ip);
+    logActivity(db, req.user.id, 'create', 'ai_config', id, JSON.stringify({ provider }));
 
     res.json({ code: 0, message: 'AI配置创建成功', data: { id } });
   } catch (err) {
@@ -358,7 +414,7 @@ router.put('/configs/:id', authRequired, adminRequired, (req, res) => {
     }
 
     logActivity(db, req.user.id, 'update', 'ai_config', id,
-      { provider: provider || config.provider }, req.ip);
+      JSON.stringify({ provider: provider || config.provider }), req.ip);
 
     res.json({ code: 0, message: 'AI配置更新成功' });
   } catch (err) {
@@ -381,7 +437,7 @@ router.delete('/configs/:id', authRequired, adminRequired, (req, res) => {
     db.prepare('DELETE FROM ai_configs WHERE id = ?').run(id);
 
     logActivity(db, req.user.id, 'delete', 'ai_config', id,
-      { provider: config.provider }, req.ip);
+      JSON.stringify({ provider: config.provider }), req.ip);
 
     res.json({ code: 0, message: 'AI配置已删除' });
   } catch (err) {
@@ -427,7 +483,18 @@ router.post('/chat', authRequired, async (req, res) => {
         const messages = [];
 
         // 系统提示词 + 知识库 + 题库上下文
-        const systemPrompt = config.system_prompt || '你是南孚电池的智能销售助手，请基于知识库内容回答销售代表的问题。回答要专业、简洁、有针对性。';
+        const defaultPrompt = `你是南孚电池的智能销售助手"智囊小助手"，专门帮助销售代表解决销售难题。
+
+**回答规则：**
+1. 直接回答用户问题，像正常对话一样
+2. 禁止输出任何方括号格式，如【知识库资料】、【来源：xxx】等
+3. 禁止输出"基于知识库"、"基于销售实战经验"等说明性文字
+4. 如果知识库有相关内容就用，没有就凭专业知识回答
+5. 回答要专业、简洁、有针对性
+
+回答风格：像一位经验丰富的销售导师在跟同事聊天，自然、亲切、专业。`;
+
+        const systemPrompt = config.system_prompt || defaultPrompt;
         let systemMsg = systemPrompt;
         if (docs.length > 0) {
           systemMsg += '\n\n' + buildContext(docs);
@@ -435,6 +502,7 @@ router.post('/chat', authRequired, async (req, res) => {
         if (relatedQuestions.length > 0) {
           systemMsg += '\n\n' + buildQuestionContext(relatedQuestions);
         }
+        
         messages.push({ role: 'system', content: systemMsg });
 
         // 获取历史对话（当前 conversation）
@@ -454,6 +522,10 @@ router.post('/chat', authRequired, async (req, res) => {
 
         // 调用 AI API
         answer = await callAIProvider(config, messages);
+        // 空内容也视为失败，降级到知识库兜底
+        if (!answer || !answer.trim()) {
+          throw new Error('AI 返回了空内容');
+        }
         useMock = false;
       } catch (apiErr) {
         console.error('[ai/chat] API call failed, falling back to mock:', apiErr.message);
@@ -465,18 +537,16 @@ router.post('/chat', authRequired, async (req, res) => {
       answer = generateMockResponse(trimmedQuestion, docs, relatedQuestions, config ? config.system_prompt : null, '未配置AI模型或API Key');
     }
 
-    // 保存到 ai_feedbacks
+    // 保存到 ai_feedbacks（含 sources）
     const feedbackId = uuidv4();
-    db.prepare(`
-      INSERT INTO ai_feedbacks (id, conversation_id, question, answer, user_id)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(feedbackId, convId, trimmedQuestion, answer, userId);
-
-    // 构建 sources（知识库 + 题库）
     const sources = [
       ...docs.map(d => ({ id: d.id, title: d.title, type: 'knowledge' })),
       ...relatedQuestions.map(q => ({ id: q.id, title: q.content.substring(0, 40), type: 'question' })),
     ];
+    db.prepare(`
+      INSERT INTO ai_feedbacks (id, conversation_id, question, answer, sources, user_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(feedbackId, convId, trimmedQuestion, answer, JSON.stringify(sources), userId);
 
     logActivity(db, userId, 'chat', 'ai_chat', feedbackId,
       { conversation_id: convId, question_length: trimmedQuestion.length, has_sources: sources.length > 0, use_mock: useMock }, req.ip);
@@ -725,7 +795,7 @@ router.delete('/conversations/:conversationId', authRequired, (req, res) => {
     ).run(conversationId, userId);
 
     logActivity(db, userId, 'delete', 'ai_conversation', conversationId,
-      { deleted_rows: result.changes }, req.ip);
+      JSON.stringify({ deleted_rows: result.changes }), req.ip);
 
     res.json({ code: 0, message: '对话已删除', data: { deleted: result.changes } });
   } catch (err) {
@@ -770,10 +840,12 @@ router.get('/admin/conversations', authRequired, (req, res) => {
     // 分页查询
     const dataSql = `
       SELECT
-        af.id, af.conversation_id, af.question, af.answer, af.rating, af.created_at,
-        u.id as user_id, u.username, u.real_name
+        af.id, af.conversation_id, af.question, af.answer, af.rating, af.sources, af.created_at,
+        u.id as user_id, u.username, u.real_name,
+        fav.id as favorite_id
       FROM ai_feedbacks af
       JOIN users u ON af.user_id = u.id
+      LEFT JOIN ai_favorites fav ON fav.feedback_id = af.id
       ${whereClause}
       ORDER BY af.created_at DESC
       LIMIT ? OFFSET ?
@@ -796,6 +868,44 @@ router.get('/admin/conversations', authRequired, (req, res) => {
   }
 });
 
+// GET /ai/admin/conversations/export - 导出对话记录
+router.get('/admin/conversations/export', authRequired, (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ code: 403, message: '只有管理员可以导出' });
+    }
+    const rows = req.db.prepare(`
+      SELECT af.question, af.answer, af.rating, af.created_at,
+             u.username, u.real_name
+      FROM ai_feedbacks af
+      JOIN users u ON af.user_id = u.id
+      ORDER BY af.created_at DESC
+    `).all();
+
+    const header = ['用户', '用户名', '问题', '回答', '评分', '时间'];
+    const csvRows = [header.map(h => `"${h}"`).join(',')];
+    for (const r of rows) {
+      const escapeCsv = (v) => `"${String(v || '').replace(/"/g, '""')}"`;
+      const ratingLabel = r.rating === 'like' ? '满意' : r.rating === 'dislike' ? '不满意' : '无评分';
+      const time = r.created_at ? new Date(r.created_at).toLocaleString('zh-CN') : '';
+      csvRows.push([
+        escapeCsv(r.real_name || '-'),
+        escapeCsv(r.username || '-'),
+        escapeCsv(r.question || '-'),
+        escapeCsv(r.answer || '-'),
+        escapeCsv(ratingLabel),
+        escapeCsv(time),
+      ].join(','));
+    }
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename=conversations_${new Date().toISOString().split('T')[0]}.csv`);
+    res.send('\uFEFF' + csvRows.join('\n'));
+  } catch (err) {
+    console.error('[ai/admin/conversations/export] Error:', err);
+    res.status(500).json({ code: 500, message: '导出失败' });
+  }
+});
+
 // GET /ai/admin/conversations/:conversationId - 查看某个对话的完整记录
 router.get('/admin/conversations/:conversationId', authRequired, (req, res) => {
   try {
@@ -806,10 +916,12 @@ router.get('/admin/conversations/:conversationId', authRequired, (req, res) => {
 
     const rows = req.db.prepare(`
       SELECT
-        af.id, af.conversation_id, af.question, af.answer, af.rating, af.created_at,
-        u.id as user_id, u.username, u.real_name
+        af.id, af.conversation_id, af.question, af.answer, af.rating, af.sources, af.created_at,
+        u.id as user_id, u.username, u.real_name,
+        fav.id as favorite_id
       FROM ai_feedbacks af
       JOIN users u ON af.user_id = u.id
+      LEFT JOIN ai_favorites fav ON fav.feedback_id = af.id
       WHERE af.conversation_id = ?
       ORDER BY af.created_at ASC
     `).all(req.params.conversationId);
@@ -823,6 +935,7 @@ router.get('/admin/conversations/:conversationId', authRequired, (req, res) => {
 
 // ==================== 语音服务（ASR + TTS） ====================
 const { speechToText } = require('../services/voice');
+const { sentenceRecognition } = require('../services/tencent_asr');
 const { textToSpeech } = require('../services/voice_edge');
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -839,37 +952,62 @@ router.post('/speech-to-text', authRequired, upload.single('audio'), async (req,
     // 写入临时文件
     fs.writeFileSync(tmpIn, req.file.buffer);
 
-    // 用 ffmpeg 统一转成 16kHz/16bit/mono WAV（异步，不阻塞事件循环）
+    // 安全：使用 spawn 替代 exec，避免 shell 注入风险
     const convertAudio = () => new Promise((resolve, reject) => {
-      exec(
-        `ffmpeg -y -i "${tmpIn}" -acodec pcm_s16le -ac 1 -ar 16000 -f wav "${tmpOut}" 2>/dev/null`,
-        { timeout: 15000 },
-        (err) => {
-          if (err) reject(err);
-          else resolve();
-        }
-      );
+      const ffmpeg = spawn('ffmpeg', [
+        '-y',
+        '-i', tmpIn,
+        '-acodec', 'pcm_s16le',
+        '-ac', '1',
+        '-ar', '16000',
+        '-f', 'wav',
+        tmpOut
+      ], { timeout: 15000 });
+      
+      let stderr = '';
+      ffmpeg.stderr.on('data', (data) => { stderr += data; });
+      
+      ffmpeg.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`ffmpeg exited with code ${code}: ${stderr.slice(0, 200)}`));
+      });
+      
+      ffmpeg.on('error', reject);
     });
+
+    let wavBuffer = req.file.buffer;
 
     try {
       await convertAudio();
+      if (fs.existsSync(tmpOut) && fs.statSync(tmpOut).size >= 100) {
+        wavBuffer = fs.readFileSync(tmpOut);
+        console.log(`[ai/speech-to-text] Converted ${(req.file.size / 1024).toFixed(1)}KB → ${(wavBuffer.length / 1024).toFixed(1)}KB WAV`);
+      }
     } catch (ffErr) {
       console.error('[ai/speech-to-text] ffmpeg convert failed:', ffErr.message);
-      // 转换失败则用原始数据尝试（可能是已经正确的 WAV）
-      const text = await speechToText(req.file.buffer);
-      return res.json({ code: 0, data: { text } });
     }
 
-    // 检查转换结果
-    if (!fs.existsSync(tmpOut) || fs.statSync(tmpOut).size < 100) {
-      console.error('[ai/speech-to-text] ffmpeg output empty, using raw');
-      const text = await speechToText(req.file.buffer);
-      return res.json({ code: 0, data: { text } });
+    let text = '';
+    // 优先使用腾讯云ASR，失败降级到火山引擎
+    try {
+      const result = await sentenceRecognition(wavBuffer, 'wav');
+      text = result.text;
+      console.log('[ai/speech-to-text] 腾讯云ASR:', text);
+    } catch (tencentErr) {
+      console.error('[ai/speech-to-text] 腾讯云ASR失败，降级火山:', tencentErr.message);
+      try {
+        text = await speechToText(wavBuffer);
+        console.log('[ai/speech-to-text] 火山ASR:', text);
+      } catch (volcanoErr) {
+        console.error('[ai/speech-to-text] 火山ASR也失败:', volcanoErr.message);
+        return res.status(500).json({ code: 500, message: '语音识别失败，请重试' });
+      }
     }
 
-    const wavBuffer = fs.readFileSync(tmpOut);
-    console.log(`[ai/speech-to-text] Converted ${(req.file.size / 1024).toFixed(1)}KB → ${(wavBuffer.length / 1024).toFixed(1)}KB WAV`);
-    const text = await speechToText(wavBuffer);
+    if (!text || !text.trim()) {
+      return res.json({ code: 0, data: { text: '' }, message: '未识别到语音内容' });
+    }
+
     res.json({ code: 0, data: { text } });
   } catch (err) {
     console.error('[ai/speech-to-text] Error:', err.message);

@@ -80,6 +80,17 @@ function ScenarioModal({ open, onClose, onSave, form, setForm, editingId }) {
               placeholder="AI 角色扮演的系统提示词，定义 AI 的角色、行为、对话风格等。这是最重要的字段。"
             />
           </div>
+          {/* 卖进目标 */}
+          <div>
+            <label className="block text-sm font-medium text-warm-700 mb-1">卖进目标</label>
+            <textarea
+              className="input min-h-[60px] resize-y"
+              value={form.sales_goal || ''}
+              onChange={(e) => setForm({ ...form, sales_goal: e.target.value })}
+              placeholder="如：成功说服客户采购南孚电池200箱 / 达成首单合作 / 促成季度框架协议"
+            />
+            <p className="text-xs text-warm-500 mt-1">本次陪练的销售目标，AI会根据销售代表的表现决定是否达成，评估报告也会基于目标达成度打分</p>
+          </div>
           {/* 标签 */}
           <div>
             <label className="block text-sm font-medium text-warm-700 mb-1">标签</label>
@@ -128,6 +139,7 @@ export default function TrainingScenarios() {
     difficulty: 'medium',
     description: '',
     scenario_prompt: '',
+    sales_goal: '',
     tags: '',
     status: 'active',
   });
@@ -165,6 +177,7 @@ export default function TrainingScenarios() {
       difficulty: 'medium',
       description: '',
       scenario_prompt: '',
+      sales_goal: '',
       tags: '',
       status: 'active',
     });
@@ -179,6 +192,7 @@ export default function TrainingScenarios() {
       difficulty: scenario.difficulty || 'medium',
       description: scenario.description || '',
       scenario_prompt: scenario.scenario_prompt || '',
+      sales_goal: scenario.sales_goal || '',
       tags: Array.isArray(scenario.tags) ? scenario.tags.join(', ') : (scenario.tags || ''),
       status: scenario.status || 'active',
     });
@@ -322,6 +336,7 @@ export default function TrainingScenarios() {
                 <tr className="border-b bg-warm-50/80">
                   <th className="text-left px-4 py-3 font-medium text-warm-500">情景名称</th>
                   <th className="text-left px-4 py-3 font-medium text-warm-500">角色类型</th>
+                  <th className="text-left px-4 py-3 font-medium text-warm-500">卖进目标</th>
                   <th className="text-left px-4 py-3 font-medium text-warm-500">难度</th>
                   <th className="text-left px-4 py-3 font-medium text-warm-500">状态</th>
                   <th className="text-left px-4 py-3 font-medium text-warm-500">创建时间</th>
@@ -344,6 +359,7 @@ export default function TrainingScenarios() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-warm-700">{s.role_type}</td>
+                    <td className="px-4 py-3 text-warm-600 text-xs">{s.sales_goal || '-'}</td>
                     <td className="px-4 py-3">{difficultyBadge(s.difficulty)}</td>
                     <td className="px-4 py-3">{statusBadge(s.status)}</td>
                     <td className="px-4 py-3 text-warm-500 text-xs">

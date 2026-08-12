@@ -19,7 +19,8 @@ const DIMENSION_CONFIG = [
     color: 'text-sky-600',
     bg: 'bg-sky-50',
     bar: 'bg-blue-500',
-    description: '电池产品参数、卖点、竞品对比的掌握程度',
+    description: '产品参数、卖点、竞品对比的掌握程度',
+    scoreSource: '产品类考试平均分 × 60% + 产品课程完成率 × 40%',
   },
   {
     key: 'sales_skills',
@@ -29,6 +30,7 @@ const DIMENSION_CONFIG = [
     bg: 'bg-emerald-50',
     bar: 'bg-emerald-500',
     description: 'SPIN提问、FAB法则、促成话术等销售技能',
+    scoreSource: '销售类考试平均分 × 30% + 销售课程完成率 × 30% + AI陪练平均分 × 40%',
   },
   {
     key: 'communication',
@@ -38,6 +40,7 @@ const DIMENSION_CONFIG = [
     bg: 'bg-purple-50',
     bar: 'bg-purple-500',
     description: '倾听、表达、共情及非暴力沟通能力',
+    scoreSource: 'AI陪练报告中"沟通表达"维度平均分',
   },
   {
     key: 'customer_management',
@@ -46,25 +49,28 @@ const DIMENSION_CONFIG = [
     color: 'text-orange-600',
     bg: 'bg-orange-50',
     bar: 'bg-orange-500',
-    description: '客户分级、跟进节奏、客情维护与售后处理',
+    description: '客户分级、跟进节奏与售后处理',
+    scoreSource: 'AI陪练报告中"客户关系"维度平均分',
   },
   {
-    key: 'policy_understanding',
-    label: '制度理解',
-    icon: FileText,
-    color: 'text-indigo-600',
-    bg: 'bg-indigo-50',
-    bar: 'bg-indigo-500',
-    description: '公司政策、价格体系、合规制度的理解与执行',
+    key: 'customer_care',
+    label: '客情维护',
+    icon: Heart,
+    color: 'text-rose-600',
+    bg: 'bg-rose-50',
+    bar: 'bg-rose-500',
+    description: '客户关系维护、客情建立与长期合作经营',
+    scoreSource: 'AI陪练报告中"客情维护"维度平均分',
   },
   {
     key: 'learning_attitude',
-    label: '学习态度',
-    icon: Star,
+    label: '学习时长',
+    icon: Clock,
     color: 'text-pink-600',
     bg: 'bg-pink-50',
     bar: 'bg-pink-500',
-    description: '主动学习意愿、参与度、学习效率与坚持度',
+    description: '课程完成率、学习时长与学习投入度',
+    scoreSource: '全部课程完成率 × 60% + 学习时长得分 × 40%（每20小时满分）',
   },
 ];
 
@@ -83,6 +89,30 @@ const ACTIVITY_CONFIG = {
   course: { icon: BookOpen, label: '学习', color: 'text-green-500', bg: 'bg-emerald-100' },
   points: { icon: Award, label: '积分', color: 'text-amber-500', bg: 'bg-amber-100' },
   default: { icon: Clock, label: '其他', color: 'text-warm-500', bg: 'bg-warm-100' },
+};
+
+/* ========== 等级/称号配置 ========== */
+const LEVELS = [
+  { level: 1, title: '江湖跑侠', min: 0, max: 199, desc: '初闯终端江湖，开启跑店历练', color: 'text-stone-500', bar: 'bg-stone-400' },
+  { level: 2, title: '拓店游侠', min: 200, max: 499, desc: '奔走各大门店，拓店小有收获', color: 'text-emerald-600', bar: 'bg-emerald-500' },
+  { level: 3, title: '终端先锋', min: 500, max: 999, desc: '熟稔门店谈判，终端得心应手', color: 'text-blue-600', bar: 'bg-blue-500' },
+  { level: 4, title: '销冠大咖', min: 1000, max: 1999, desc: '实战战绩突出，团队中坚力量', color: 'text-purple-600', bar: 'bg-purple-500' },
+  { level: 5, title: '城市英雄', min: 2000, max: Infinity, desc: '一线顶尖标杆，众人学习榜样', color: 'text-amber-500', bar: 'bg-amber-500' },
+];
+
+function getLevelInfo(totalEarnedPoints) {
+  const pts = totalEarnedPoints || 0;
+  const current = LEVELS.find(l => pts >= l.min && pts <= l.max) || LEVELS[0];
+  const next = LEVELS.find(l => l.level === current.level + 1) || null;
+  const needNext = next ? next.min - pts : 0;
+  return { ...current, next_title: next?.title || null, need_next: needNext };
+}
+
+const LEVEL_UP_TEXTS = {
+  '1→2': { icon: '🎉', subtitle: '恭喜升级｜解锁称号【拓店游侠】', body: '奔走终端江湖，你的努力已经看见！继续跑店答题攒积分，向着终端先锋进发。' },
+  '2→3': { icon: '✨', subtitle: '恭喜升级｜解锁称号【终端先锋】', body: '谈判拓店越来越顺手，一线战场已然独当一面！再接再厉，冲击销冠大咖。' },
+  '3→4': { icon: '🔥', subtitle: '恭喜升级｜解锁称号【销冠大咖】', body: '实力得到认证！你已是一线实战中坚，距离城市英雄仅一步之遥。' },
+  '4→5': { icon: '🏆', subtitle: '重磅升级｜解锁最高称号【城市英雄】', body: '恭喜达成至高荣誉！你是本区域业务标杆，欢迎多多投稿实战视频，带动全体伙伴共同成长。' },
 };
 
 /* 雷达图 tooltip */
@@ -105,6 +135,7 @@ export default function Profile() {
   const [radarLoading, setRadarLoading] = useState(false);
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [error, setError] = useState('');
+  const [levelUpPopup, setLevelUpPopup] = useState(null);
 
   /* ---- 从 localStorage 获取当前用户 ---- */
   const currentUser = (() => {
@@ -185,6 +216,29 @@ export default function Profile() {
     loadOverview();
   }, [loadRadar, loadOverview]);
 
+  /* ---- 等级升级检测 ---- */
+  useEffect(() => {
+    if (!overview?.level) return;
+    const currentLevel = overview.level.level;
+    const lastSeen = localStorage.getItem('last_seen_level');
+
+    if (lastSeen === null) {
+      // 首次访问，记录当前等级，不弹窗
+      localStorage.setItem('last_seen_level', String(currentLevel));
+      return;
+    }
+
+    const lastSeenNum = parseInt(lastSeen, 10);
+    if (currentLevel > lastSeenNum) {
+      const fromTo = `${lastSeenNum}→${currentLevel}`;
+      const texts = LEVEL_UP_TEXTS[fromTo];
+      if (texts) {
+        setLevelUpPopup({ ...texts, newLevel: currentLevel, newTitle: overview.level.title });
+      }
+      localStorage.setItem('last_seen_level', String(currentLevel));
+    }
+  }, [overview]);
+
   /* ---- 雷达图数据 ---- */
   const chartData = dimensions.map((d) => ({
     subject: d.subject,
@@ -246,6 +300,61 @@ export default function Profile() {
           </div>
         )}
       </div>
+
+      {/* ===== 积分称号等级 ===== */}
+      {overview && overview.level && (
+        <div className="card">
+          {(() => {
+            const levelInfo = overview.level;
+            const currentLevel = LEVELS.find(l => l.level === levelInfo.level) || LEVELS[0];
+            const pts = overview.total_earned_points || 0;
+            const progressPct = currentLevel.max === Infinity
+              ? 100
+              : Math.min(100, Math.max(0, Math.round(((pts - currentLevel.min) / (currentLevel.max - currentLevel.min + 1)) * 100)));
+
+            return (
+              <>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-semibold text-warm-900 flex items-center gap-2">
+                    <Award size={18} className="text-amber-500" />
+                    我的称号
+                  </h3>
+                  <span className={`px-3 py-1 rounded-full text-xs font-bold ${currentLevel.color} bg-amber-50 border border-amber-200`}>
+                    L{currentLevel.level} · {currentLevel.title}
+                  </span>
+                </div>
+
+                <p className="text-xs text-warm-500 mb-3">
+                  当前称号：<strong className="text-warm-800">{levelInfo.title}</strong>
+                  {levelInfo.next_title ? (
+                    <>｜距离下一级还需 <strong className="text-primary-600">{levelInfo.need_next}</strong> 积分</>
+                  ) : (
+                    <>｜已达成最高称号 🏆</>
+                  )}
+                </p>
+
+                {/* 进度条 */}
+                <div className="w-full bg-warm-200 rounded-full h-2.5 mb-1.5">
+                  <div
+                    className={`h-2.5 rounded-full transition-all duration-500 ${currentLevel.bar}`}
+                    style={{ width: `${progressPct}%` }}
+                  />
+                </div>
+
+                <div className="flex justify-between text-[11px] text-warm-400">
+                  <span>{currentLevel.min} 分</span>
+                  {currentLevel.max !== Infinity && <span>{currentLevel.max} 分</span>}
+                  {currentLevel.max === Infinity && <span>{currentLevel.min}+ 分</span>}
+                </div>
+
+                <p className="text-xs text-warm-400 mt-3 italic">
+                  闯荡终端江湖，积累积分解锁更高荣誉！
+                </p>
+              </>
+            );
+          })()}
+        </div>
+      )}
 
       {/* ===== 六维能力雷达图 ===== */}
       <div className="card">
@@ -336,6 +445,15 @@ export default function Profile() {
                   {config.description}
                 </p>
               )}
+
+              {/* 得分来源 */}
+              {config.scoreSource && (
+                <div className="mt-2 pt-2 border-t border-warm-100">
+                  <p className="text-[11px] text-warm-400 leading-relaxed">
+                    <span className="font-medium text-warm-500">得分来源：</span>{config.scoreSource}
+                  </p>
+                </div>
+              )}
             </div>
           );
         })}
@@ -409,6 +527,23 @@ export default function Profile() {
           </div>
         )}
       </div>
+
+      {/* ===== 升级弹窗 ===== */}
+      {levelUpPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setLevelUpPopup(null)}>
+          <div className="bg-white rounded-2xl shadow-soft-xl p-6 w-full max-w-sm text-center" onClick={(e) => e.stopPropagation()}>
+            <div className="text-5xl mb-3">{levelUpPopup.icon}</div>
+            <h3 className="text-lg font-bold text-warm-900 mb-2">{levelUpPopup.subtitle}</h3>
+            <p className="text-sm text-warm-500 leading-relaxed mb-5">{levelUpPopup.body}</p>
+            <button
+              onClick={() => setLevelUpPopup(null)}
+              className="btn-primary w-full"
+            >
+              知道了
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

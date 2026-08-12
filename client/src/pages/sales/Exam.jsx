@@ -47,6 +47,7 @@ export default function Exam() {
 
   // ---- 考试记录 ----
   const [examRecords, setExamRecords] = useState([]);
+  const [expandedRecord, setExpandedRecord] = useState(null); // 展开查看详情的记录ID
   const [recordsLoading, setRecordsLoading] = useState(false);
 
   // ---- 考试进行中 ----
@@ -80,17 +81,27 @@ export default function Exam() {
   }, []);
 
   // ==================== 加载考试记录 ====================
-  const loadExamRecords = useCallback(async (examId) => {
+  const loadExamRecords = useCallback(async () => {
     try {
       setRecordsLoading(true);
-      const res = await api.get(`/exams/${examId}/my-records`);
-      setExamRecords(res.data?.records || res.data || []);
+      const res = await api.get('/exams/my-all-records');
+      // api拦截器已解包，res = { code: 0, data: { records: [...] } }
+      const records = res?.data?.records || [];
+      console.log('考试记录:', records, '原始响应:', res);
+      setExamRecords(records);
     } catch (err) {
       console.error('加载考试记录失败:', err);
     } finally {
       setRecordsLoading(false);
     }
   }, []);
+
+  // 切换到记录视图时加载所有考试记录
+  useEffect(() => {
+    if (view === VIEWS.RECORDS) {
+      loadExamRecords();
+    }
+  }, [view, loadExamRecords]);
 
   // ==================== 开始考试 ====================
   const startExam = async (exam) => {
@@ -199,7 +210,7 @@ export default function Exam() {
       const payload = {
         record_id: currentExam.record_id,
         answers: Object.entries(answers).map(([qId, val]) => ({
-          question_id: Number(qId),
+          question_id: qId,
           answer: val,
         })),
       };
@@ -252,13 +263,6 @@ export default function Exam() {
   useEffect(() => {
     loadPendingExams();
   }, [loadPendingExams]);
-
-  // 切换到记录视图时加载默认第一个考试的记录
-  useEffect(() => {
-    if (view === VIEWS.RECORDS && pendingExams.length > 0) {
-      loadExamRecords(pendingExams[0].id);
-    }
-  }, [view, pendingExams, loadExamRecords]);
 
   // ==================== 渲染：待考列表 ====================
   const renderPendingList = () => (
@@ -793,56 +797,108 @@ export default function Exam() {
       ) : (
         <div className="space-y-4">
           {examRecords.map((record) => (
-            <div key={record.id} className="card flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                {/* 通过/未通过图标 */}
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                  record.passed !== false ? 'bg-emerald-100' : 'bg-rose-100'
-                }`}>
-                  {record.passed !== false ? (
-                    <CheckCircle size={22} className="text-emerald-600" />
-                  ) : (
-                    <XCircle size={22} className="text-rose-500" />
-                  )}
-                </div>
-
-                <div>
-                  <h4 className="font-semibold text-warm-900">
-                    {record.exam_title || `考试记录 #${record.id}`}
-                  </h4>
-                  <div className="flex items-center gap-4 mt-1 text-sm text-warm-500">
-                    <span>分数: <strong className="text-warm-700">{record.score}</strong></span>
-                    <span>状态: {' '}
-                      <span className={record.passed !== false ? 'text-emerald-600' : 'text-rose-500'}>
-                        {record.passed !== false ? '通过' : '未通过'}
-                      </span>
-                    </span>
-                    {record.duration != null && (
-                      <span>用时: {formatDuration(record.duration)}</span>
-                    )}
-                    {record.created_at && (
-                      <span>{formatDate(record.created_at)}</span>
+            <div key={record.id}>
+              <div
+                className="card flex items-center justify-between cursor-pointer hover:shadow-md transition-shadow"
+                onClick={() => setExpandedRecord(expandedRecord === record.id ? null : record.id)}
+              >
+                <div className="flex items-center gap-4">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                    record.passed !== false ? 'bg-emerald-100' : 'bg-rose-100'
+                  }`}>
+                    {record.passed !== false ? (
+                      <CheckCircle size={22} className="text-emerald-600" />
+                    ) : (
+                      <XCircle size={22} className="text-rose-500" />
                     )}
                   </div>
+
+                  <div>
+                    <h4 className="font-semibold text-warm-900">
+                      {record.exam_title || `考试记录 #${record.id}`}
+                    </h4>
+                    <div className="flex items-center gap-4 mt-1 text-sm text-warm-500">
+                      <span>分数: <strong className="text-warm-700">{record.score}</strong></span>
+                      <span>状态: {' '}
+                        <span className={record.passed !== false ? 'text-emerald-600' : 'text-rose-500'}>
+                          {record.passed !== false ? '通过' : '未通过'}
+                        </span>
+                      </span>
+                      {record.duration != null && (
+                        <span>用时: {formatDuration(record.duration)}</span>
+                      )}
+                      {record.created_at && (
+                        <span>{formatDate(record.created_at)}</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {record.can_retake && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const exam = pendingExams.find((e) => e.id === record.exam_id) || {
+                          id: record.exam_id,
+                          title: record.exam_title,
+                          duration: record.duration ? Math.ceil(record.duration / 60) : 30,
+                        };
+                        handleRetake(exam);
+                      }}
+                      className="btn-primary flex items-center gap-2 text-sm"
+                    >
+                      <RotateCcw size={16} />
+                      重考
+                    </button>
+                  )}
+                  <ChevronRight
+                    size={20}
+                    className={`text-warm-400 transition-transform ${expandedRecord === record.id ? 'rotate-90' : ''}`}
+                  />
                 </div>
               </div>
 
-              {/* 重考按钮 */}
-              {record.can_retake && (
-                <button
-                  onClick={() => {
-                    const exam = pendingExams.find((e) => e.id === record.exam_id) || {
-                      id: record.exam_id,
-                      title: record.exam_title,
-                      duration: record.duration ? Math.ceil(record.duration / 60) : 30,
-                    };
-                    handleRetake(exam);
-                  }}
-                  className="btn-primary flex items-center gap-2 text-sm"
-                >
-                  <RotateCcw size={16} />
-                  重考
-                </button>
+              {/* 展开的答题明细 */}
+              {expandedRecord === record.id && record.answers && record.answers.length > 0 && (
+                <div className="mt-2 card bg-warm-25 max-h-[60vh] overflow-y-auto">
+                  <h5 className="font-semibold text-warm-800 mb-3">答题明细</h5>
+                  <div className="space-y-3">
+                    {record.answers.map((ans, idx) => (
+                      <div
+                        key={ans.question_id || idx}
+                        className={`p-3 rounded-lg border ${ans.is_correct ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'}`}
+                      >
+                        <div className="flex items-start gap-2">
+                          <span className="text-sm font-medium text-warm-500 mt-0.5 shrink-0">
+                            {idx + 1}.
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-warm-800 mb-1">{ans.content}</p>
+                            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                              <span className="text-warm-500">
+                                你的答案: <strong className={ans.is_correct ? 'text-emerald-600' : 'text-rose-500'}>
+                                  {ans.user_answer != null ? String(ans.user_answer) : '未作答'}
+                                </strong>
+                              </span>
+                              <span className="text-warm-500">
+                                正确答案: <strong className="text-emerald-600">
+                                  {Array.isArray(ans.correct_answer) ? ans.correct_answer.join(', ') : String(ans.correct_answer)}
+                                </strong>
+                              </span>
+                              <span className="text-warm-500">
+                                得分: <strong>{ans.score}/{ans.total_score}</strong>
+                              </span>
+                            </div>
+                            {ans.analysis && (
+                              <p className="text-xs text-warm-400 mt-1">{ans.analysis}</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
           ))}

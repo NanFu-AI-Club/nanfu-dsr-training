@@ -456,7 +456,7 @@ export default function Statistics() {
               </thead>
               <tbody>
                 {ranking.slice(0, 20).map((item, idx) => {
-                  const isMe = currentUserId && item.user_id === currentUserId;
+                  const isMe = currentUserId && (item.user_id === currentUserId || item.id === currentUserId);
                   const rank = item.rank || idx + 1;
                   return (
                     <tr
@@ -479,7 +479,7 @@ export default function Statistics() {
                         )}
                       </td>
                       <td className="table-cell font-medium text-warm-900">
-                        {item.name || item.username || '-'}
+                        {item.real_name || item.name || item.username || '-'}
                         {isMe && (
                           <span className="badge-blue text-xs ml-2">我</span>
                         )}

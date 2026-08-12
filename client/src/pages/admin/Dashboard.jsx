@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { Users, UserCheck, BookOpen, FileText, TrendingUp, TrendingDown, Trophy, Clock } from 'lucide-react';
+import { Users, UserCheck, BookOpen, FileText, TrendingUp, TrendingDown, Trophy, Clock, HelpCircle, MessageSquare, CheckSquare, Coins } from 'lucide-react';
 import api from '../../api';
 
 const STAT_CARD_ICONS = {
@@ -8,6 +8,10 @@ const STAT_CARD_ICONS = {
   activeUsers: { icon: UserCheck, color: 'text-emerald-600', bg: 'bg-emerald-50' },
   totalCourses: { icon: BookOpen, color: 'text-sky-600', bg: 'bg-sky-50' },
   totalExams: { icon: FileText, color: 'text-accent-600', bg: 'bg-accent-50' },
+  totalQuestions: { icon: HelpCircle, color: 'text-purple-600', bg: 'bg-purple-50' },
+  totalScenarios: { icon: MessageSquare, color: 'text-orange-600', bg: 'bg-orange-50' },
+  todayCheckins: { icon: CheckSquare, color: 'text-green-600', bg: 'bg-green-50' },
+  totalPoints: { icon: Coins, color: 'text-amber-600', bg: 'bg-amber-50' },
 };
 
 const RANK_COLORS = ['#f59e0b', '#94a3b8', '#d97706'];
@@ -55,6 +59,10 @@ export default function Dashboard() {
         { key: 'activeUsers', label: '活跃用户', value: overview.active_users ?? 0, change: overview.active_change },
         { key: 'totalCourses', label: '课程总数', value: overview.total_courses ?? 0, change: overview.course_change },
         { key: 'totalExams', label: '考试总数', value: overview.total_exams ?? 0, change: overview.exam_change },
+        { key: 'totalQuestions', label: '题库总数', value: overview.total_questions ?? 0 },
+        { key: 'totalScenarios', label: '陪练情景', value: overview.total_scenarios ?? 0 },
+        { key: 'todayCheckins', label: '今日签到', value: overview.today_checkins ?? 0 },
+        { key: 'totalPoints', label: '总积分', value: overview.total_points ?? 0 },
       ]
     : [];
 

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LayoutDashboard, BookOpen, HelpCircle, FileText, PlaySquare, Bot, MessageSquare, Users, ScrollText, LogOut, Menu, X, Cloud, Award, Target, KeyRound } from 'lucide-react';
+import { LayoutDashboard, BookOpen, HelpCircle, FileText, PlaySquare, Bot, MessageSquare, Users, ScrollText, LogOut, Menu, X, Cloud, Award, Target, KeyRound, ShoppingBag, ClipboardList, Camera } from 'lucide-react';
 import ChangePasswordModal from '../components/ChangePasswordModal';
 
 const menuItems = [
@@ -12,10 +12,13 @@ const menuItems = [
   { path: '/admin/courses', icon: PlaySquare, label: '课程管理' },
   { path: '/admin/ai-config', icon: Bot, label: 'AI 配置' },
   { path: '/admin/training-scenarios', icon: MessageSquare, label: 'AI 陪练' },
+  { path: '/admin/training-records', icon: ClipboardList, label: '陪练记录' },
   { path: '/admin/users', icon: Users, label: '用户管理' },
   { path: '/admin/point-rules', icon: Award, label: '积分设置' },
   { path: '/admin/radar-dimensions', icon: Target, label: '能力维度' },
+  { path: '/admin/shop', icon: ShoppingBag, label: '积分商城' },
   { path: '/admin/chat-logs', icon: Cloud, label: '智囊对话' },
+  { path: '/admin/submissions', icon: Camera, label: '风采投稿' },
   { path: '/admin/logs', icon: ScrollText, label: '活动日志' },
 ];
 
@@ -32,10 +35,10 @@ export default function AdminLayout() {
       {/* 品牌区 — 更柔和的吉卜力风格 */}
       <div className="h-16 flex items-center px-5 border-b border-warm-100/60 shrink-0">
         <div className="w-9 h-9 bg-gradient-to-br from-sky-400 to-primary-600 rounded-2xl flex items-center justify-center text-white font-bold text-sm mr-3 shrink-0 shadow-soft">
-          南
+          跑
         </div>
         <div className="min-w-0">
-          <div className="font-bold text-sm text-warm-800 truncate">南孚 DSR</div>
+          <div className="font-bold text-sm text-warm-800 truncate">终端跑店宝典</div>
           <div className="text-[11px] text-warm-400 truncate">销售培训系统</div>
         </div>
       </div>
@@ -114,7 +117,7 @@ export default function AdminLayout() {
           <div className="fixed inset-0 bg-warm-900/20 backdrop-blur-sm z-40 md:hidden animate-fade-in" onClick={closeSidebar} />
           <aside className="fixed inset-y-0 left-0 z-50 w-64 bg-white flex flex-col shadow-soft-xl md:hidden animate-slide-up">
             <div className="flex items-center justify-between h-16 px-5 border-b border-warm-100/60 shrink-0">
-              <div className="font-bold text-sm text-warm-800">南孚 DSR 管理</div>
+              <div className="font-bold text-sm text-warm-800">终端跑店宝典 管理</div>
               <button onClick={closeSidebar} className="p-2 rounded-xl hover:bg-warm-50 text-warm-500 transition-all duration-200">
                 <X size={20} />
               </button>

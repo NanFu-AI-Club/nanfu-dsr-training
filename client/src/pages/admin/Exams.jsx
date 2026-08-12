@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Search, Plus, Edit3, Trash2, Eye, Send, Users as UsersIcon, X,
   ChevronUp, ChevronDown, RotateCcw, GripVertical, Clock, CheckCircle, XCircle, Check, ChevronLeft, ChevronRight,
+  Download,
 } from 'lucide-react';
 import api from '../../api';
 
@@ -341,6 +342,24 @@ export default function Exams() {
       openRecords({ id: recordsExamId });
     } catch (err) {
       console.error('授权补考失败:', err);
+    }
+  };
+
+  // 导出考试记录为 Excel
+  const exportRecords = async (examId) => {
+    try {
+      const token = localStorage.getItem('token');
+      // 使用原生下载方式（后端直接返回文件流）
+      const url = `/api/exams/${examId}/records/export?token=${encodeURIComponent(token)}`;
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = ''; // 文件名由后端 Content-Disposition 决定
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error('导出失败:', err);
+      alert('导出失败，请重试');
     }
   };
 
@@ -765,7 +784,15 @@ export default function Exams() {
           <div className="bg-white rounded-xl shadow-soft-xl p-6 w-full max-w-4xl max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4 shrink-0">
               <h3 className="text-lg font-semibold">考生记录</h3>
-              <button onClick={() => setRecordsOpen(false)} className="text-warm-400 hover:text-warm-600"><X size={20} /></button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => exportRecords(recordsExamId)}
+                  className="btn-secondary text-sm flex items-center gap-1.5"
+                >
+                  <Download size={14} /> 导出 Excel
+                </button>
+                <button onClick={() => setRecordsOpen(false)} className="text-warm-400 hover:text-warm-600"><X size={20} /></button>
+              </div>
             </div>
             <div className="flex-1 overflow-auto">
               <table className="w-full">

@@ -45,8 +45,8 @@ router.get('/overview', authRequired, (req, res) => {
     // 课程总数
     data.total_courses = db.prepare("SELECT COUNT(*) as count FROM courses WHERE status = 'published'").get().count;
 
-    // 考试总数
-    data.total_exams = db.prepare("SELECT COUNT(*) as count FROM exams WHERE status = 'published'").get().count;
+    // 考试总数（已发布 + 进行中）
+    data.total_exams = db.prepare("SELECT COUNT(*) as count FROM exams WHERE status IN ('published', 'ongoing')").get().count;
 
     // 题库总数
     data.total_questions = db.prepare("SELECT COUNT(*) as count FROM questions WHERE status = 'active'").get().count;
@@ -60,13 +60,31 @@ router.get('/overview', authRequired, (req, res) => {
       WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', 'localtime') AND status = 'published'
     `).get().count;
 
-    // 上月新增考试
+    // 本月新增考试（按创建时间）
     data.new_exams_this_month = db.prepare(`
       SELECT COUNT(*) as count FROM exams
-      WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', 'localtime') AND status = 'published'
+      WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', 'localtime') AND status IN ('published', 'ongoing')
     `).get().count;
 
-    // 变化趋势（上月新增）
+    // 今日签到人数
+    data.today_checkins = db.prepare(`
+      SELECT COUNT(DISTINCT user_id) as count FROM check_ins
+      WHERE date(check_date) = date('now', 'localtime')
+    `).get().count;
+
+    // 总积分发放量
+    const pointRow = db.prepare(`
+      SELECT COALESCE(SUM(points), 0) as total FROM point_logs
+    `).get();
+    data.total_points = pointRow ? pointRow.total : 0;
+
+    // 总陪练次数
+    const trainingRow = db.prepare(`
+      SELECT COUNT(*) as count FROM training_sessions
+    `).get();
+    data.total_trainings = trainingRow ? trainingRow.count : 0;
+
+    // 变化趋势
     data.user_change = data.new_users_this_month || null;
     data.active_change = db.prepare(`
       SELECT COUNT(*) as count FROM activity_logs
@@ -74,6 +92,9 @@ router.get('/overview', authRequired, (req, res) => {
     `).get().count || null;
     data.course_change = data.new_courses_this_month || null;
     data.exam_change = data.new_exams_this_month || null;
+    data.checkin_change = null;  // 签到是新增功能，无历史对比
+    data.points_change = null;
+    data.training_change = null;
 
     res.json({ code: 0, data });
   } catch (err) {

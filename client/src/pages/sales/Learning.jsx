@@ -2,19 +2,12 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Play, FileText, File, Clock, BookOpen, ChevronRight,
   X, CheckCircle, Circle, BarChart3, Loader2, AlertCircle,
-  ExternalLink, RefreshCw, Flag,
+  ExternalLink, RefreshCw, Flag, Download,
 } from 'lucide-react';
 import api from '../../api';
+import PDFViewer from '../../components/PDFViewer';
 
-// Tab 配置
-const TABS = [
-  { key: 'all', label: '全部课程' },
-  { key: 'video', label: '视频' },
-  { key: 'ppt', label: 'PPT' },
-  { key: 'pdf', label: 'PDF' },
-];
-
-// 课程类型图标与颜色（吉卜力柔和风格）
+// 课程类型图标与颜色
 const TYPE_CONFIG = {
   video: {
     icon: Play,
@@ -44,7 +37,8 @@ const TYPE_CONFIG = {
 
 export default function Learning() {
   const [courses, setCourses] = useState([]);
-  const [activeTab, setActiveTab] = useState('all');
+  const [categories, setCategories] = useState([]); // 动态分类列表
+  const [activeCategory, setActiveCategory] = useState('all');
   const [selectedCourse, setSelectedCourse] = useState(null);
   const [showDetail, setShowDetail] = useState(false);
   const [roadmap, setRoadmap] = useState([]);
@@ -64,6 +58,11 @@ export default function Learning() {
       const res = await api.get('/courses');
       const list = res.data?.list || res.data || res || [];
       setCourses(list);
+
+      // 从课程数据中提取分类
+      const cats = [...new Set(list.map(c => c.category).filter(Boolean))];
+      setCategories(cats);
+
       // 批量加载所有课程进度
       try {
         const progRes = await api.get('/courses/my-progress');
@@ -168,11 +167,11 @@ export default function Learning() {
     }
   }, [selectedCourse, showDetail, loadCourseProgress]);
 
-  // 筛选课程
+  // 筛选课程（按分类）
   const filteredCourses =
-    activeTab === 'all'
+    activeCategory === 'all'
       ? courses
-      : courses.filter((c) => c.type === activeTab);
+      : courses.filter((c) => c.category === activeCategory);
 
   // 格式化时长（分钟 -> "XX 分钟"）
   const formatDuration = (minutes) => {
@@ -192,27 +191,39 @@ export default function Learning() {
   };
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 overflow-y-auto gap-4 md:gap-6 md:flex-row md:overflow-hidden">
+    <div className="flex flex-col flex-1 min-h-0 gap-4 md:gap-6 md:flex-row">
       {/* ===== 左侧：课程主区域 ===== */}
-      <div className="flex-1 min-w-0">
-        <h2 className="page-title mb-6">销冠秘籍闯关</h2>
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col">
+        <h2 className="page-title mb-6 shrink-0">销冠闯关秘籍</h2>
 
-        {/* Tab 切换 */}
-        <div className="flex gap-2 mb-6 border-b pb-2">
-          {TABS.map((tab) => (
+        {/* 滚动容器 */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          {/* Tab 切换 - 按课程分类 */}
+          <div className="flex gap-2 mb-6 border-b pb-2 overflow-x-auto">
             <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`px-4 py-2 rounded-t-xl text-sm font-medium transition border-b-2 -mb-[2px] ${
-                activeTab === tab.key
+              onClick={() => setActiveCategory('all')}
+              className={`px-4 py-2 rounded-t-xl text-sm font-medium transition border-b-2 -mb-[2px] whitespace-nowrap ${
+                activeCategory === 'all'
                   ? 'text-primary-600 border-primary-600 bg-primary-50/50'
                   : 'text-warm-500 border-transparent hover:text-warm-700'
               }`}
             >
-              {tab.label}
+              全部课程
             </button>
-          ))}
-        </div>
+            {categories.map((cat) => (
+              <button
+                key={cat}
+                onClick={() => setActiveCategory(cat)}
+                className={`px-4 py-2 rounded-t-xl text-sm font-medium transition border-b-2 -mb-[2px] whitespace-nowrap ${
+                  activeCategory === cat
+                    ? 'text-primary-600 border-primary-600 bg-primary-50/50'
+                    : 'text-warm-500 border-transparent hover:text-warm-700'
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
 
         {/* 错误提示 */}
         {error && (
@@ -234,7 +245,7 @@ export default function Learning() {
           <div className="text-center py-16">
             <BookOpen size={48} className="mx-auto mb-3 text-warm-300" />
             <p className="text-warm-400">
-              {activeTab === 'all' ? '暂无课程' : `暂无${TABS.find((t) => t.key === activeTab)?.label}课程`}
+              {activeCategory === 'all' ? '暂无课程' : `${activeCategory} 分类暂无课程`}
             </p>
           </div>
         ) : (
@@ -385,6 +396,7 @@ export default function Learning() {
             })}
           </div>
         )}
+        </div>
       </div>
 
       {/* ===== 右侧：通关路线图 ===== */}
@@ -536,43 +548,61 @@ export default function Learning() {
                 </div>
               )}
 
-              {/* PPT 类型 */}
-              {selectedCourse.type === 'ppt' && (
-                <div className="space-y-4">
-                  <div className="bg-purple-50 rounded-xl p-8 text-center">
-                    <FileText size={64} className="mx-auto mb-4 text-purple-400" />
-                    <p className="text-purple-700 font-medium mb-2">PPT 课件</p>
-                    {selectedCourse.resource_url ? (
-                      <iframe
-                        src={`/api/course-media/${selectedCourse.id}?type=resource&token=${encodeURIComponent(localStorage.getItem('token') || '')}`}
-                        className="w-full rounded-xl border-warm-100/60 mt-4"
-                        style={{ height: '60vh', minHeight: '300px' }}
-                        title={selectedCourse.title}
-                      />
+              {/* PDF/PPT 类型 - 使用 pdf.js 直接在页面内渲染 */}
+              {(selectedCourse.type === 'pdf' || selectedCourse.type === 'ppt') && selectedCourse.resource_url && (
+                <div className={`${selectedCourse.type === 'pdf' ? 'bg-rose-50' : 'bg-purple-50'} rounded-xl p-4 sm:p-6`}>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      {selectedCourse.type === 'pdf' ? (
+                        <File size={24} className="text-rose-500" />
+                      ) : (
+                        <FileText size={24} className="text-purple-500" />
+                      )}
+                      <span className="font-medium text-sm sm:text-base">{selectedCourse.title}</span>
+                    </div>
+                    {/* PDF/PPT 标记完成按钮 */}
+                    {getProgressPercent(selectedCourse.id) < 100 ? (
+                      <button
+                        onClick={() => handleMarkComplete(selectedCourse.id)}
+                        disabled={progressLoading[selectedCourse.id]}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-primary-500 to-primary-600 text-white text-sm font-medium rounded-xl shadow-soft hover:shadow-soft-lg transition-all duration-200 disabled:opacity-50"
+                      >
+                        {progressLoading[selectedCourse.id] ? (
+                          <Loader2 size={16} className="animate-spin" />
+                        ) : (
+                          <CheckCircle size={16} />
+                        )}
+                        标记为已完成
+                      </button>
                     ) : (
-                      <p className="text-sm text-warm-400">暂无可预览的PPT资源</p>
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 text-sm font-medium rounded-full border border-emerald-200">
+                        <CheckCircle size={16} />
+                        已完成
+                      </span>
                     )}
                   </div>
+                  <PDFViewer
+                    url={`/api/${selectedCourse.type === 'ppt' ? 'ppt-to-pdf' : 'course-media'}/${selectedCourse.id}?type=resource`}
+                    token={localStorage.getItem('token') || ''}
+                  />
                 </div>
               )}
 
-              {/* PDF 类型 */}
-              {selectedCourse.type === 'pdf' && (
-                <div className="space-y-4">
-                  {selectedCourse.resource_url ? (
-                    <iframe
-                      src={`/api/course-media/${selectedCourse.id}?type=resource&token=${encodeURIComponent(localStorage.getItem('token') || '')}`}
-                      className="w-full rounded-xl border-warm-100/60"
-                      style={{ height: '60vh', minHeight: '300px' }}
-                      title={selectedCourse.title}
-                    />
+              {/* PPT/PDF 类型 - 无资源（统一处理） */}
+              {(selectedCourse.type === 'ppt' || selectedCourse.type === 'pdf') && !selectedCourse.resource_url && (
+                <div className={`${selectedCourse.type === 'ppt' ? 'bg-purple-50' : 'bg-rose-50'} rounded-xl p-8 text-center`}>
+                  {selectedCourse.type === 'ppt' ? (
+                    <>
+                      <FileText size={64} className="mx-auto mb-4 text-purple-400" />
+                      <p className="text-purple-700 font-medium mb-2">PPT 课件</p>
+                    </>
                   ) : (
-                    <div className="bg-rose-50 rounded-xl p-8 text-center">
+                    <>
                       <File size={64} className="mx-auto mb-4 text-red-400" />
                       <p className="text-red-700 font-medium mb-2">PDF 文档</p>
-                      <p className="text-sm text-warm-400">暂无可预览的PDF资源</p>
-                    </div>
+                    </>
                   )}
+                  <p className="text-sm text-warm-400">暂无可预览的资源</p>
                 </div>
               )}
 
@@ -614,16 +644,6 @@ export default function Learning() {
                 <div className="flex items-center gap-2 md:gap-3">
                   {progressLoading[selectedCourse.id] && (
                     <Loader2 size={16} className="animate-spin text-warm-400" />
-                  )}
-                  {getProgressPercent(selectedCourse.id) < 100 && (
-                    <button
-                      onClick={() => handleMarkComplete(selectedCourse.id)}
-                      disabled={progressLoading[selectedCourse.id]}
-                      className="btn-primary flex items-center gap-2 text-sm"
-                    >
-                      <CheckCircle size={16} />
-                      标记已完成
-                    </button>
                   )}
                   {getProgressPercent(selectedCourse.id) >= 100 && (
                     <span className="badge-green text-sm flex items-center gap-1">

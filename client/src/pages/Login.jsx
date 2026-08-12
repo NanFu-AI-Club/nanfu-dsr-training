@@ -50,11 +50,14 @@ export default function Login() {
           <div className="w-20 h-20 bg-white/80 backdrop-blur-xl rounded-3xl flex items-center justify-center mx-auto mb-5 shadow-soft-lg animate-float">
             <span className="text-transparent bg-gradient-to-br from-sky-500 to-primary-700 bg-clip-text text-4xl font-bold">南</span>
           </div>
-          <h1 className="text-2xl font-bold text-warm-800">南孚 DSR 销售培训系统</h1>
+          <h1 className="text-2xl font-bold text-warm-800">欢迎来到终端跑店宝典</h1>
           <p className="text-warm-500 mt-1.5 text-sm flex items-center justify-center gap-1.5">
             <Sparkles size={14} className="text-accent-400" />
-            智能赋能 · 数据驱动 · 实战陪练
+            跑店有方法，谈店有妙招
             <Sparkles size={14} className="text-accent-400" />
+          </p>
+          <p className="text-warm-400 mt-2 text-xs leading-relaxed px-4">
+            汇集陈列标准、店主沟通话术、活动政策、竞品应对，跑店遇到任何难题，都能在这里找到实战答案。
           </p>
         </div>
 
@@ -111,11 +114,6 @@ export default function Login() {
               {loading ? '登录中...' : '登 录'}
             </button>
           </form>
-
-          <div className="mt-6 pt-5 border-t border-warm-100/60 text-center text-xs text-warm-400 space-y-1">
-            <p>演示账号: admin / admin123</p>
-            <p>业务员: sales01 / sales123</p>
-          </div>
         </div>
       </div>
     </div>

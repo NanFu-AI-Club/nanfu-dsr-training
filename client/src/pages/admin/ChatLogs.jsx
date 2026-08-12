@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../../api';
-import { Search, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, User, Clock, ThumbsUp, ThumbsDown, Loader2, Minus } from 'lucide-react';
+import { Search, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, User, Clock, ThumbsUp, ThumbsDown, Loader2, Minus, Download, Star, BookOpen } from 'lucide-react';
 
 export default function AdminChatLogs() {
   const [tab, setTab] = useState('conversations'); // conversations | feedbacks
@@ -67,7 +67,8 @@ export default function AdminChatLogs() {
   const fetchFeedbacks = useCallback(async () => {
     setFbLoading(true);
     try {
-      const res = await api.get('/knowledge/feedbacks', { params: { rating: feedbackFilter === 'all' ? undefined : feedbackFilter } });
+      const params = feedbackFilter === 'all' ? {} : { rating: feedbackFilter };
+      const res = await api.get('/knowledge/feedbacks', { params });
       const data = res?.data || res;
       const fbs = Array.isArray(data) ? data : (data?.list || []);
       setFeedbacks(fbs);
@@ -99,6 +100,26 @@ export default function AdminChatLogs() {
     return text.length > len ? text.substring(0, len) + '...' : text;
   };
 
+  const parseSources = (sources) => {
+    try {
+      if (!sources) return [];
+      const parsed = typeof sources === 'string' ? JSON.parse(sources) : sources;
+      return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+  };
+
+  const handleExport = (type) => {
+    const url = type === 'feedbacks' ? '/knowledge/feedbacks/export' : '/ai/admin/conversations/export';
+    api.get(url, { responseType: 'blob' }).then(res => {
+      const blob = res.data || res;
+      const a = document.createElement('a');
+      a.href = window.URL.createObjectURL(blob);
+      a.download = `${type}_${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+      a.remove();
+    }).catch(err => alert('导出失败: ' + (err?.message || '未知错误')));
+  };
+
   // 按 conversation_id 分组
   const grouped = {};
   logs.forEach((item) => {
@@ -119,7 +140,7 @@ export default function AdminChatLogs() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-warm-900">智囊对话记录</h1>
-          <p className="text-sm text-warm-500 mt-1">查看业务员在南孚智囊小助手中的所有对话和反馈</p>
+          <p className="text-sm text-warm-500 mt-1">查看业务员在智囊小助手中的所有对话和反馈</p>
         </div>
         {/* Tab 切换 */}
         <div className="flex bg-warm-100 rounded-xl p-1">
@@ -146,15 +167,20 @@ export default function AdminChatLogs() {
       {tab === 'conversations' && (<>
         {/* 搜索栏 */}
         <div className="bg-white/80 backdrop-blur-xl rounded-2xl border border-warm-100/60 p-4">
-          <div className="relative max-w-md">
-            <Search size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-warm-400" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-              placeholder="搜索问题内容、业务员姓名..."
-              className="input pl-10 rounded-xl border-warm-200"
-            />
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="relative flex-1 min-w-[200px] max-w-md">
+              <Search size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-warm-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                placeholder="搜索问题内容、业务员姓名..."
+                className="input pl-10 rounded-xl border-warm-200 w-full"
+              />
+            </div>
+            <button onClick={() => handleExport('conversations')} className="btn-secondary flex items-center gap-1.5 text-sm shrink-0">
+              <Download size={15} /> 导出CSV
+            </button>
           </div>
         </div>
 
@@ -167,7 +193,7 @@ export default function AdminChatLogs() {
           <div className="text-center py-16 bg-white/60 rounded-2xl border border-warm-100/60">
             <MessageSquare size={40} className="mx-auto mb-3 text-warm-300" />
             <p className="text-warm-500">暂无对话记录</p>
-            <p className="text-warm-400 text-sm mt-1">业务员开始使用南孚智囊小助手后，对话记录将显示在这里</p>
+            <p className="text-warm-400 text-sm mt-1">业务员开始使用智囊小助手后，对话记录将显示在这里</p>
           </div>
         ) : (
           <div className="space-y-3">
@@ -226,7 +252,7 @@ export default function AdminChatLogs() {
                               </div>
                               <div className="flex-1 min-w-0">
                                 <p className="text-sm text-warm-700 whitespace-pre-wrap break-words">{truncate(msg.answer, 500)}</p>
-                                <div className="flex items-center gap-2 mt-1">
+                                <div className="flex items-center gap-2 mt-1 flex-wrap">
                                   {msg.rating === 'like' && (
                                     <span className="flex items-center gap-0.5 text-[10px] text-emerald-500">
                                       <ThumbsUp size={10} /> 好评
@@ -237,7 +263,29 @@ export default function AdminChatLogs() {
                                       <ThumbsDown size={10} /> 差评
                                     </span>
                                   )}
+                                  {msg.favorite_id && (
+                                    <span className="flex items-center gap-0.5 text-[10px] text-amber-500">
+                                      <Star size={10} fill="currentColor" /> 已收藏
+                                    </span>
+                                  )}
                                 </div>
+                                {(() => {
+                                  const srcs = parseSources(msg.sources);
+                                  return srcs.length > 0 ? (
+                                    <div className="flex flex-wrap gap-1 mt-2">
+                                      {srcs.map((s, i) => (
+                                        <span key={i} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium ${
+                                          s.type === 'question'
+                                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                                            : 'bg-sky-50 text-sky-700 border border-sky-100'
+                                        }`}>
+                                          <BookOpen size={10} />
+                                          {s.type === 'question' ? '题库' : '知识库'}: {truncate(s.title, 30)}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  ) : null;
+                                })()}
                               </div>
                             </div>
                           </div>
@@ -281,7 +329,7 @@ export default function AdminChatLogs() {
       {tab === 'feedbacks' && (
         <div className="bg-white/80 backdrop-blur-xl rounded-2xl border border-warm-100/60">
           <div className="p-4 border-b border-warm-100/60">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               {[
                 { key: 'all', label: '全部' },
                 { key: 'like', label: '满意' },
@@ -298,6 +346,10 @@ export default function AdminChatLogs() {
                   {f.label}
                 </button>
               ))}
+              <div className="flex-1" />
+              <button onClick={() => handleExport('feedbacks')} className="btn-secondary flex items-center gap-1.5 text-sm shrink-0">
+                <Download size={15} /> 导出CSV
+              </button>
             </div>
           </div>
           <div className="overflow-auto">
@@ -305,37 +357,58 @@ export default function AdminChatLogs() {
               <thead>
                 <tr>
                   <th className="table-header">用户</th>
+                  <th className="table-header">问题</th>
+                  <th className="table-header w-16">评分</th>
+                  <th className="table-header w-16">收藏</th>
                   <th className="table-header">关联文档</th>
-                  <th className="table-header">评分</th>
-                  <th className="table-header">反馈内容</th>
                   <th className="table-header w-36">时间</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-warm-100">
                 {fbLoading ? (
                   <tr>
-                    <td colSpan={5} className="text-center py-12">
+                    <td colSpan={6} className="text-center py-12">
                       <Loader2 size={20} className="animate-spin text-warm-400 mx-auto" />
                     </td>
                   </tr>
                 ) : feedbacks.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="text-center py-12 text-sm text-warm-400">暂无反馈数据</td>
+                    <td colSpan={6} className="text-center py-12 text-sm text-warm-400">暂无反馈数据</td>
                   </tr>
                 ) : (
-                  feedbacks.map((fb, idx) => (
+                  feedbacks.map((fb, idx) => {
+                    const srcs = parseSources(fb.sources);
+                    return (
                     <tr key={fb.id || idx} className="hover:bg-warm-50/80">
                       <td className="table-cell font-medium">{fb.user_name || fb.user}</td>
-                      <td className="table-cell text-warm-600">{fb.doc_title || '-'}</td>
+                      <td className="table-cell text-warm-600">{truncate(fb.question, 50) || '-'}</td>
                       <td className="table-cell">
                         {fb.rating === 'like' && <ThumbsUp size={16} className="text-green-500" />}
                         {fb.rating === 'dislike' && <ThumbsDown size={16} className="text-rose-500" />}
                         {(!fb.rating || fb.rating === 'none') && <Minus size={16} className="text-warm-400" />}
                       </td>
-                      <td className="table-cell text-warm-600 max-w-xs truncate">{fb.content || fb.comment || '-'}</td>
+                      <td className="table-cell">
+                        {fb.favorite_id ? <Star size={15} className="text-amber-500" fill="currentColor" /> : <Minus size={15} className="text-warm-300" />}
+                      </td>
+                      <td className="table-cell">
+                        {srcs.length > 0 ? (
+                          <div className="flex flex-wrap gap-0.5">
+                            {srcs.map((s, i) => (
+                              <span key={i} className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                s.type === 'question'
+                                  ? 'bg-emerald-50 text-emerald-700'
+                                  : 'bg-sky-50 text-sky-700'
+                              }`}>
+                                {s.type === 'question' ? '📝' : '📚'} {truncate(s.title, 20)}
+                              </span>
+                            ))}
+                          </div>
+                        ) : <span className="text-warm-400 text-xs">-</span>}
+                      </td>
                       <td className="table-cell text-xs text-warm-400">{fb.created_at}</td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>

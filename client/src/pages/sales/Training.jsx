@@ -4,7 +4,8 @@ import {
   ChevronRight, Users, Play, StopCircle, RotateCcw, Clock,
   ThumbsUp, ThumbsDown, Star, TrendingUp, TrendingDown,
   FileText, BarChart3, History, BookOpen, Target, MessageCircle,
-  Award, Zap, Check, HelpCircle, Shield, Heart, UserCheck,
+  Award, Zap, Check, HelpCircle, Shield, Heart, UserCheck, Bot,
+  Mic, MicOff, Volume2, VolumeX,
 } from 'lucide-react';
 import api from '../../api';
 
@@ -47,9 +48,172 @@ export default function Training() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
 
+  // 语音相关状态
+  const [recording, setRecording] = useState(false);
+  const [ttsPlaying, setTtsPlaying] = useState({});
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const ttsAudioRef = useRef(null);
+
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const scrollRef = useRef(null);
+
+  /* ---- 停止所有TTS ---- */
+  const stopAllTTS = useCallback(() => {
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    if (ttsAudioRef.current) { ttsAudioRef.current.pause(); ttsAudioRef.current = null; }
+    setTtsPlaying({});
+  }, []);
+
+  /* ---- 组件卸载时停止语音 ---- */
+  useEffect(() => {
+    return () => {
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
+      if (ttsAudioRef.current) { ttsAudioRef.current.pause(); ttsAudioRef.current = null; }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+    };
+  }, []);
+
+  /* ---- 语音输入 ---- */
+  const startRecording = async () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    // 策略1: 桌面端 → 浏览器原生语音识别
+    if (SpeechRecognition) {
+      try {
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'zh-CN';
+        recognition.interimResults = false;
+        recognition.continuous = false;
+        recognition.onstart = () => setRecording(true);
+        recognition.onend = () => setRecording(false);
+        recognition.onerror = (e) => {
+          setRecording(false);
+          if (e.error === 'not-allowed') alert('请允许浏览器使用麦克风');
+        };
+        recognition.onresult = (e) => {
+          const text = e.results[0][0].transcript.trim();
+          if (text) {
+            setInputText(text);
+            if (sending) return; // AI回复中，阻止语音自动发送
+            setTimeout(() => handleSendMessageWithText(text), 100);
+          }
+        };
+        recognition.start();
+        return;
+      } catch (e) { /* 降级到录音上传 */ }
+    }
+
+    // 策略2: 录音上传到腾讯云ASR
+    if (!navigator.mediaDevices?.getUserMedia) {
+      alert('当前浏览器不支持语音输入，请使用 Chrome 或 Edge 浏览器');
+      return;
+    }
+
+    try {
+      let mimeType = 'audio/webm;codecs=opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'audio/webm';
+      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'audio/mp4';
+      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = '';
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+      mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType || 'audio/webm' });
+        if (audioBlob.size < 200) return;
+        const formData = new FormData();
+        const ext = (mimeType || '').includes('mp4') ? 'mp4' : 'webm';
+        formData.append('audio', audioBlob, `recording.${ext}`);
+        try {
+          const res = await api.post('/ai/speech-to-text', formData);
+          const text = res.data?.text || res.data?.data?.text || '';
+          if (text.trim()) {
+            setInputText(text);
+            if (sending) return; // AI回复中，阻止语音自动发送
+            setTimeout(() => handleSendMessageWithText(text), 100);
+          }
+        } catch (err) { console.error('语音识别失败:', err); alert('语音识别失败，请重试'); }
+      };
+      mediaRecorder.start();
+      setRecording(true);
+    } catch (err) {
+      console.error('录音失败:', err);
+      if (err.name === 'NotAllowedError') {
+        const isHTTP = location.protocol === 'http:';
+        alert(isHTTP
+          ? '麦克风需要HTTPS安全连接。\n\n请访问 https://1.15.172.36\n（首次打开需点击"高级"→"继续访问"）'
+          : '请允许浏览器使用麦克风');
+      }
+      else if (err.name === 'NotFoundError') alert('未检测到麦克风设备');
+      else alert('语音输入启动失败: ' + err.message);
+    }
+  };
+
+  const stopRecording = () => {
+    setRecording(false);
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
+  /* ---- TTS 语音输出 ---- */
+  const playVolcanoTTS = async (msgId, text) => {
+    try {
+      setTtsPlaying(prev => ({ ...prev, [msgId]: 'loading' }));
+      const token = localStorage.getItem('token');
+      const resp = await fetch('/api/ai/text-to-speech', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ text }),
+      });
+      if (!resp.ok) throw new Error(`TTS HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      const audioUrl = URL.createObjectURL(blob);
+      if (ttsAudioRef.current) { ttsAudioRef.current.pause(); URL.revokeObjectURL(ttsAudioRef.current.src); }
+      const audio = new Audio(audioUrl);
+      ttsAudioRef.current = audio;
+      audio.onended = () => { setTtsPlaying(prev => ({ ...prev, [msgId]: false })); URL.revokeObjectURL(audioUrl); ttsAudioRef.current = null; };
+      audio.onerror = () => { setTtsPlaying(prev => ({ ...prev, [msgId]: false })); URL.revokeObjectURL(audioUrl); ttsAudioRef.current = null; };
+      await audio.play();
+      setTtsPlaying(prev => ({ ...prev, [msgId]: true }));
+    } catch (err) {
+      setTtsPlaying(prev => ({ ...prev, [msgId]: false }));
+    }
+  };
+
+  const playTTS = (msgId, text) => {
+    if (ttsPlaying[msgId]) {
+      stopAllTTS();
+      return;
+    }
+    stopAllTTS();
+    if (window.speechSynthesis) {
+      try {
+        setTtsPlaying(prev => ({ ...prev, [msgId]: true }));
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'zh-CN';
+        utterance.rate = 1.0;
+        utterance.pitch = 1.0;
+        let hasEnded = false;
+        const timeout = setTimeout(() => {
+          if (!hasEnded) { window.speechSynthesis.cancel(); playVolcanoTTS(msgId, text); }
+        }, 4000);
+        utterance.onend = () => { hasEnded = true; clearTimeout(timeout); setTtsPlaying(prev => ({ ...prev, [msgId]: false })); };
+        utterance.onerror = () => { hasEnded = true; clearTimeout(timeout); playVolcanoTTS(msgId, text); };
+        window.speechSynthesis.speak(utterance);
+        return;
+      } catch { playVolcanoTTS(msgId, text); return; }
+    }
+    playVolcanoTTS(msgId, text);
+  };
 
   /* ---- 自动滚动到底部 ---- */
   useEffect(() => {
@@ -145,9 +309,9 @@ export default function Training() {
   };
 
   /* ---- 发送消息 ---- */
-  const handleSendMessage = async () => {
-    const text = inputText.trim();
+  const handleSendMessageWithText = async (text) => {
     if (!text || !currentSession) return;
+    if (sending) return; // 防止重复提交
 
     const userMsg = {
       id: `user-${Date.now()}`,
@@ -158,6 +322,7 @@ export default function Training() {
     };
     setMessages((prev) => [...prev, userMsg]);
     setInputText('');
+    stopAllTTS();
 
     try {
       setSending(true);
@@ -166,16 +331,22 @@ export default function Training() {
       });
       const responseData = res.data || res;
       const aiMsg = responseData.ai_message || responseData;
+      const aiId = aiMsg.id || `ai-${Date.now()}`;
+      const aiContent = aiMsg.content || aiMsg.message || '';
       setMessages((prev) => [
         ...prev,
         {
-          id: aiMsg.id || `ai-${Date.now()}`,
+          id: aiId,
           type: 'ai',
           role: 'ai',
-          content: aiMsg.content || aiMsg.message || '',
+          content: aiContent,
           timestamp: new Date().toISOString(),
         },
       ]);
+      // 自动语音播放AI回复（仅当不是太长时自动播放，太长的手动点）
+      if (aiContent.length <= 200) {
+        setTimeout(() => playTTS(aiId, aiContent), 300);
+      }
     } catch (err) {
       console.error('发送消息失败:', err);
       setMessages((prev) => [
@@ -193,9 +364,16 @@ export default function Training() {
     }
   };
 
+  const handleSendMessage = () => {
+    if (sending) return; // 防止重复提交
+    const text = inputText.trim();
+    if (text) handleSendMessageWithText(text);
+  };
+
   /* ---- 结束会话并获取报告 ---- */
   const handleEndSession = async () => {
     if (!currentSession) return;
+    stopAllTTS();
     try {
       setSending(true);
       await api.post(`/training/sessions/${currentSession.id}/end`);
@@ -212,20 +390,36 @@ export default function Training() {
     }
   };
 
-  /* ---- 查看历史报告 ---- */
+  /* ---- 查看历史记录（对话+报告） ---- */
   const handleViewHistoryReport = async (session) => {
     try {
       setSending(true);
       setError('');
-      const reportRes = await api.get(`/training/sessions/${session.id}/report`);
+      // 同时获取报告和对话消息
+      const [reportRes, msgRes] = await Promise.all([
+        api.get(`/training/sessions/${session.id}/report`),
+        api.get(`/training/sessions/${session.id}/messages`),
+      ]);
       const reportData = reportRes.data || reportRes;
       setReport(reportData.report || reportData);
+
+      // 解析消息列表
+      const msgData = msgRes.data || msgRes;
+      const msgList = Array.isArray(msgData) ? msgData : (msgData.messages || msgData.list || msgData.data || []);
+      setMessages(msgList.map((m) => ({
+        id: m.id,
+        type: m.role === 'system' ? 'system' : m.role === 'user' ? 'user' : 'ai',
+        role: m.role,
+        content: m.content,
+        timestamp: m.created_at,
+      })));
+
       setCurrentSession(session);
       const scenario = scenarios.find((s) => s.id === session.scenario_id);
       setSelectedScenario(scenario || null);
-      setView('report');
+      setView('historyDetail');
     } catch (err) {
-      setError(err?.message || '加载报告失败');
+      setError(err?.message || '加载历史记录失败');
     } finally {
       setSending(false);
     }
@@ -256,7 +450,7 @@ export default function Training() {
    *  渲染：情景选择视图
    * ================================================================ */
   const renderScenarioView = () => (
-    <div className="space-y-6">
+    <div className="flex-1 overflow-y-auto space-y-6">
       {/* 错误提示 */}
       {error && (
         <div className="flex items-center gap-2 px-4 py-2 bg-rose-50 text-rose-600 rounded-xl">
@@ -289,15 +483,14 @@ export default function Training() {
             <p className="text-warm-400">暂无可用的陪练情景</p>
           </div>
         ) : (
-          <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-thin" ref={scrollRef}>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {scenarios.map((scenario) => {
               const isSelected = selectedScenario?.id === scenario.id;
               const diff = DIFFICULTY_CONFIG[scenario.difficulty] || DIFFICULTY_CONFIG.medium;
               return (
-                <button
+                <div
                   key={scenario.id}
-                  onClick={() => setSelectedScenario(scenario)}
-                  className={`card shrink-0 w-64 text-left cursor-pointer transition-all hover:shadow-soft-lg ${
+                  className={`card text-left transition-all hover:shadow-soft-lg ${
                     isSelected
                       ? 'ring-2 ring-sky-400 border-primary-500 shadow-soft-lg'
                       : ''
@@ -313,33 +506,38 @@ export default function Training() {
                   <p className="text-sm text-warm-500 line-clamp-2 mb-3">
                     {scenario.description || '暂无描述'}
                   </p>
-                  {scenario.customer_role && (
-                    <div className="flex items-center gap-1 text-xs text-warm-400">
+                  {scenario.role_type && (
+                    <div className="flex items-center gap-1 text-xs text-warm-400 mb-1">
                       <Users size={12} />
-                      <span>{scenario.customer_role}</span>
+                      <span>客户角色：{scenario.role_type}</span>
                     </div>
                   )}
-                </button>
+                  {scenario.sales_goal && (
+                    <div className="flex items-center gap-1 text-xs text-amber-600 mb-3">
+                      <Target size={12} />
+                      <span>卖进目标：{scenario.sales_goal}</span>
+                    </div>
+                  )}
+                  <button
+                    onClick={() => {
+                      setSelectedScenario(scenario);
+                      setTimeout(() => handleStartTraining(scenario), 0);
+                    }}
+                    disabled={sending}
+                    className="btn-primary w-full flex items-center justify-center gap-2 mt-2"
+                  >
+                    {sending ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <Play size={16} />
+                    )}
+                    开始陪练
+                  </button>
+                </div>
               );
             })}
           </div>
         )}
-      </div>
-
-      {/* 开始按钮 */}
-      <div className="flex justify-center">
-        <button
-          onClick={handleStartTraining}
-          disabled={!selectedScenario || sending}
-          className="btn-primary flex items-center gap-2 px-8 py-3 text-base"
-        >
-          {sending ? (
-            <Loader2 size={20} className="animate-spin" />
-          ) : (
-            <Play size={20} />
-          )}
-          开始陪练
-        </button>
       </div>
     </div>
   );
@@ -366,17 +564,27 @@ export default function Training() {
               <h3 className="font-semibold text-warm-900">{scenarioTitle}</h3>
               <p className="text-xs text-warm-400">
                 {customerRole} · 对话 {Math.ceil(dialogRounds / 2)} 轮
+                {selectedScenario?.sales_goal && (
+                  <span className="text-amber-600 ml-2">| 目标：{selectedScenario.sales_goal}</span>
+                )}
               </p>
             </div>
           </div>
-          <button
-            onClick={handleEndSession}
-            disabled={sending}
-            className="btn-danger flex items-center gap-2 text-sm px-3 py-1.5"
-          >
-            <StopCircle size={16} />
-            结束会话
-          </button>
+          <div className="flex items-center gap-2">
+            {Object.values(ttsPlaying).some(v => v) && (
+              <button onClick={stopAllTTS} className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 transition text-xs font-medium">
+                <VolumeX size={14} /> 停止播放
+              </button>
+            )}
+            <button
+              onClick={handleEndSession}
+              disabled={sending}
+              className="btn-danger flex items-center gap-2 text-sm px-3 py-1.5"
+            >
+              <StopCircle size={16} />
+              结束并查看报告
+            </button>
+          </div>
         </div>
 
         {/* 消息列表 */}
@@ -403,11 +611,24 @@ export default function Training() {
             if (msg.type === 'ai') {
               return (
                 <div key={msg.id} className="flex justify-start gap-2">
-                  <div className="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center shrink-0 mt-1">
-                    <Users size={16} className="text-warm-600" />
+                  <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center shrink-0 mt-1">
+                    <Bot size={16} className="text-amber-600" />
                   </div>
                   <div className="max-w-[75%]">
-                    <p className="text-xs text-warm-400 mb-1">{customerRole}</p>
+                    <div className="flex items-center gap-2 mb-1">
+                      <p className="text-xs text-warm-400">{customerRole}</p>
+                      <button
+                        onClick={() => playTTS(msg.id, msg.content)}
+                        className="text-warm-400 hover:text-primary-600 transition"
+                        title={ttsPlaying[msg.id] ? '停止播放' : '语音播放'}
+                      >
+                        {ttsPlaying[msg.id] === 'loading' ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <Volume2 size={13} className={ttsPlaying[msg.id] === true ? 'animate-pulse text-primary-600' : ''} />
+                        )}
+                      </button>
+                    </div>
                     <div className="bg-white border rounded-2xl rounded-tl-md px-4 py-2.5 shadow-soft">
                       <p className="text-sm whitespace-pre-wrap text-warm-800">{msg.content}</p>
                     </div>
@@ -422,13 +643,25 @@ export default function Training() {
 
         {/* 输入区 */}
         <div className="bg-white border-t px-4 py-3 shrink-0 rounded-b-xl">
-          <div className="flex items-end gap-3">
+          <div className="flex items-end gap-2">
+            <button
+              onClick={recording ? stopRecording : startRecording}
+              disabled={sending}
+              className={`p-2.5 rounded-2xl shrink-0 transition-all duration-200 ${
+                recording
+                  ? 'bg-rose-500 text-white animate-pulse shadow-lg shadow-rose-200'
+                  : 'bg-warm-100 text-warm-500 hover:text-primary-600 hover:bg-primary-100 active:scale-95'
+              }`}
+              title={recording ? '点击停止录音' : '语音输入'}
+            >
+              {recording ? <MicOff size={20} /> : <Mic size={20} />}
+            </button>
             <textarea
               ref={inputRef}
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="输入你的回复..."
+              placeholder={recording ? '正在聆听...' : '输入你的回复...'}
               rows={2}
               className="input flex-1 resize-none"
               disabled={sending}
@@ -589,6 +822,83 @@ export default function Training() {
   };
 
   /* ================================================================
+   *  渲染：历史记录详情视图（对话+报告）
+   * ================================================================ */
+  const renderHistoryDetailView = () => (
+    <div className="space-y-4">
+      <button
+        onClick={() => { setView('history'); setMessages([]); setReport(null); }}
+        className="flex items-center gap-1.5 text-sm text-warm-500 hover:text-primary-600 transition"
+      >
+        <ChevronLeft size={16} />
+        返回历史记录
+      </button>
+
+      {currentSession && (
+        <div className="card">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-bold text-warm-900">{currentSession.scenario_title || selectedScenario?.title || '陪练记录'}</h3>
+              <p className="text-xs text-warm-400 mt-1">
+                {currentSession.role_type || ''} · {currentSession.started_at ? new Date(currentSession.started_at).toLocaleString('zh-CN') : ''}
+              </p>
+            </div>
+            {report && (
+              <div className="text-right">
+                <div className={`text-2xl font-bold ${report.total_score >= 80 ? 'text-green-600' : report.total_score >= 60 ? 'text-amber-600' : 'text-rose-500'}`}>
+                  {report.total_score?.toFixed(1)}
+                </div>
+                <div className="text-xs text-warm-400">总分</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 对话记录 */}
+      <div className="card">
+        <h4 className="font-semibold text-warm-900 mb-3">对话记录</h4>
+        <div className="space-y-3 max-h-[400px] overflow-y-auto">
+          {messages.length === 0 && <p className="text-sm text-warm-400 text-center py-4">暂无对话记录</p>}
+          {messages.map((msg) => {
+            if (msg.type === 'system') {
+              return (
+                <div key={msg.id} className="flex justify-center">
+                  <div className="bg-sky-50 text-sky-700 text-xs px-4 py-2 rounded-full max-w-lg text-center">
+                    {msg.content}
+                  </div>
+                </div>
+              );
+            }
+            if (msg.type === 'user') {
+              return (
+                <div key={msg.id} className="flex justify-end">
+                  <div className="max-w-[75%] bg-primary-600 text-white rounded-2xl rounded-br-md px-4 py-2.5">
+                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <div key={msg.id} className="flex justify-start gap-2">
+                <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                  <Bot size={16} className="text-amber-600" />
+                </div>
+                <div className="max-w-[75%] bg-white border border-warm-200 rounded-2xl rounded-tl-md px-4 py-2.5">
+                  <p className="text-sm whitespace-pre-wrap text-warm-800">{msg.content}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 评估报告 */}
+      {report && renderReportView()}
+    </div>
+  );
+
+  /* ================================================================
    *  渲染：历史会话视图
    * ================================================================ */
   const renderHistoryView = () => (
@@ -684,14 +994,17 @@ export default function Training() {
    *  主渲染
    * ================================================================ */
   return (
-    <div>
-      <h2 className="page-title mb-6">模拟门店实战对练</h2>
+    <div className="flex flex-col flex-1 min-h-0">
+      <h2 className="page-title mb-4 md:mb-6 shrink-0">模拟门店实战对练</h2>
 
       {/* 根据 view 切换视图 */}
-      {view === 'scenarios' && renderScenarioView()}
-      {view === 'chatting' && renderChatView()}
-      {view === 'report' && renderReportView()}
-      {view === 'history' && renderHistoryView()}
+      <div className="flex-1 flex flex-col min-h-0">
+        {view === 'scenarios' && renderScenarioView()}
+        {view === 'chatting' && renderChatView()}
+        {view === 'report' && <div className="flex-1 overflow-y-auto">{renderReportView()}</div>}
+        {view === 'history' && <div className="flex-1 overflow-y-auto">{renderHistoryView()}</div>}
+        {view === 'historyDetail' && <div className="flex-1 overflow-y-auto">{renderHistoryDetailView()}</div>}
+      </div>
     </div>
   );
 }

@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Search, Plus, Edit3, Trash2, X, Play, FileText, Image as ImageIcon,
-  Map, ChevronDown, BookOpen,
+  Map, ChevronDown, BookOpen, Upload, Loader2, ExternalLink, Download,
 } from 'lucide-react';
 import api from '../../api';
 
@@ -19,7 +19,54 @@ const TYPE_OPTIONS = [
 
 /* ================= 课程弹窗表单 ================= */
 function CourseModal({ open, onClose, onSave, form, setForm, editingId }) {
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef(null);
+
   if (!open) return null;
+
+  const handleFileSelect = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const allowedExts = ['.mp4', '.webm', '.mov', '.pdf', '.ppt', '.pptx'];
+    const ext = '.' + file.name.split('.').pop().toLowerCase();
+    if (!allowedExts.includes(ext)) {
+      alert('只支持视频(mp4/webm/mov)、PDF、PPT文件');
+      return;
+    }
+
+    if (file.size > 500 * 1024 * 1024) {
+      alert('文件大小不能超过500MB');
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await api.post('/courses/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      if (res.code === 0) {
+        setForm({ ...form, resource_url: res.data.url });
+        if (ext === '.mp4' || ext === '.webm' || ext === '.mov') {
+          setForm(prev => ({ ...prev, resource_url: res.data.url, type: 'video' }));
+        } else if (ext === '.pdf') {
+          setForm(prev => ({ ...prev, resource_url: res.data.url, type: 'pdf' }));
+        } else if (ext === '.ppt' || ext === '.pptx') {
+          setForm(prev => ({ ...prev, resource_url: res.data.url, type: 'ppt' }));
+        }
+      }
+    } catch (err) {
+      alert('上传失败: ' + (err.message || '未知错误'));
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div className="bg-white rounded-xl shadow-soft-xl p-6 w-full max-w-lg max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
@@ -52,8 +99,39 @@ function CourseModal({ open, onClose, onSave, form, setForm, editingId }) {
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-warm-700 mb-1">资源URL（COS / TOS 地址）</label>
-            <input className="input" value={form.resource_url} onChange={(e) => setForm({ ...form, resource_url: e.target.value })} placeholder="https://dsr-1307167583.cos.ap-shanghai.myqcloud.com/training/videos/xxx.mp4" />
+            <label className="block text-sm font-medium text-warm-700 mb-1">课程文件</label>
+            <div className="flex gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".mp4,.webm,.mov,.pdf,.ppt,.pptx"
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="btn-secondary flex items-center gap-1.5 text-sm"
+              >
+                {uploading ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                {uploading ? '上传中...' : '上传文件'}
+              </button>
+              {form.resource_url && (
+                <span className="text-xs text-green-600 flex items-center">✓ 已上传</span>
+              )}
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-warm-700 mb-1">资源URL（或填写外部链接）</label>
+            <input
+              className="input text-sm"
+              value={form.resource_url}
+              onChange={(e) => setForm({ ...form, resource_url: e.target.value })}
+              placeholder={form.resource_url || "上传文件或填写COS/TOS地址"}
+            />
+            {form.resource_url && form.resource_url.startsWith('/uploads/') && (
+              <p className="text-xs text-warm-500 mt-1">本地文件：{form.resource_url}</p>
+            )}
           </div>
           <div>
             <label className="block text-sm font-medium text-warm-700 mb-1">封面URL（可选）</label>
@@ -149,9 +227,8 @@ function StageModal({ open, onClose, onSave, form, setForm, courses, editingId }
 
 /* ================= 主页面 ================= */
 export default function Courses() {
-  const [activeTab, setActiveTab] = useState('courses'); // courses | roadmap
+  const [activeTab, setActiveTab] = useState('courses');
 
-  // ---- 课程 ----
   const [courses, setCourses] = useState([]);
   const [courseLoading, setCourseLoading] = useState(false);
   const [search, setSearch] = useState('');
@@ -165,17 +242,14 @@ export default function Courses() {
     duration: '', category: '', tags: '', sort_order: '',
   });
 
-  // ---- 路线图阶段 ----
   const [stages, setStages] = useState([]);
   const [stageLoading, setStageLoading] = useState(false);
   const [stageModalOpen, setStageModalOpen] = useState(false);
   const [stageEditingId, setStageEditingId] = useState(null);
   const [stageForm, setStageForm] = useState({ name: '', description: '', course_ids: [], sort_order: '' });
 
-  // 错误提示
   const [error, setError] = useState('');
 
-  /* ================= 数据加载 ================= */
   const fetchCourses = useCallback(async () => {
     setCourseLoading(true);
     setError('');
@@ -211,7 +285,6 @@ export default function Courses() {
     else fetchStages();
   }, [activeTab, fetchCourses, fetchStages]);
 
-  /* ================= 课程操作 ================= */
   const openAddCourse = () => {
     setCourseEditingId(null);
     setCourseForm({
@@ -268,7 +341,6 @@ export default function Courses() {
     }
   };
 
-  /* ================= 阶段操作 ================= */
   const openAddStage = () => {
     setStageEditingId(null);
     setStageForm({ name: '', description: '', course_ids: [], sort_order: '' });
@@ -280,7 +352,7 @@ export default function Courses() {
     setStageForm({
       name: stage.name || '',
       description: stage.description || '',
-      course_ids: stage.course_ids || [],
+      course_ids: stage.required_courses || [],
       sort_order: stage.sort_order ?? '',
     });
     setStageModalOpen(true);
@@ -290,8 +362,10 @@ export default function Courses() {
     if (!stageForm.name.trim()) return;
     try {
       const payload = {
-        ...stageForm,
+        name: stageForm.name,
+        description: stageForm.description,
         sort_order: stageForm.sort_order ? Number(stageForm.sort_order) : undefined,
+        required_courses: stageForm.course_ids,
       };
       if (stageEditingId) {
         await api.put(`/courses/roadmap-stages/${stageEditingId}`, payload);
@@ -315,7 +389,6 @@ export default function Courses() {
     }
   };
 
-  /* ================= 渲染 ================= */
   const renderTypeIcon = (type) => {
     const config = TYPE_ICONS[type];
     if (!config) return <FileText size={18} className="text-warm-400" />;
@@ -329,7 +402,6 @@ export default function Courses() {
         <h1 className="page-title">课程管理</h1>
       </div>
 
-      {/* Tab 切换 */}
       <div className="flex bg-warm-100 rounded-xl p-1 w-fit">
         <button
           onClick={() => setActiveTab('courses')}
@@ -349,7 +421,6 @@ export default function Courses() {
         </button>
       </div>
 
-      {/* 错误提示 */}
       {error && (
         <div className="bg-rose-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm">
           {error}
@@ -357,10 +428,8 @@ export default function Courses() {
         </div>
       )}
 
-      {/* ========== 课程列表 ========== */}
       {activeTab === 'courses' && (
         <>
-          {/* 筛选栏 */}
           <div className="card">
             <div className="flex flex-wrap items-center gap-3">
               <div className="relative flex-1 min-w-[200px] max-w-xs">
@@ -391,7 +460,6 @@ export default function Courses() {
             </div>
           </div>
 
-          {/* 课程列表 */}
           <div className="card">
             {courseLoading ? (
               <div className="flex items-center justify-center py-16">
@@ -479,7 +547,6 @@ export default function Courses() {
         </>
       )}
 
-      {/* ========== 通关路线图 ========== */}
       {activeTab === 'roadmap' && (
         <div className="card">
           <div className="flex items-center justify-between mb-4">
@@ -516,7 +583,7 @@ export default function Courses() {
                         <div className="flex items-center gap-2 mt-2">
                           <span className="badge-blue text-xs">
                             <BookOpen size={12} className="mr-1" />
-                            {stage.course_count ?? (stage.course_ids?.length || 0)} 门课程
+                            {(stage.required_courses?.length || 0)} 门课程
                           </span>
                         </div>
                       </div>
@@ -537,7 +604,6 @@ export default function Courses() {
         </div>
       )}
 
-      {/* ========== 课程弹窗 ========== */}
       <CourseModal
         open={courseModalOpen}
         onClose={() => setCourseModalOpen(false)}
@@ -547,7 +613,6 @@ export default function Courses() {
         editingId={courseEditingId}
       />
 
-      {/* ========== 阶段弹窗 ========== */}
       <StageModal
         open={stageModalOpen}
         onClose={() => setStageModalOpen(false)}

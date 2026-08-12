@@ -2,16 +2,22 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { authRequired, adminRequired } = require('../middleware/auth');
 
+function csvEscape(val) {
+  const s = String(val || '').replace(/"/g, '""');
+  return `"${s}"`;
+}
+
 /**
  * 记录操作日志
  */
-function logActivity(db, userId, action, targetType, targetId, detail) {
+function logActivity(db, userId, action, targetType, targetId, detail, module = 'knowledge', ip = null) {
   const id = uuidv4();
   const now = new Date().toISOString();
+  const detailStr = detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : null;
   db.prepare(
-    `INSERT INTO activity_logs (id, user_id, action, target_type, target_id, detail, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, userId, action, targetType, targetId, detail || null, now);
+    `INSERT INTO activity_logs (id, user_id, action, module, target_type, target_id, detail, ip, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, userId, action, module, targetType, targetId, detailStr, ip, now);
 }
 
 // ============================================================
@@ -479,7 +485,7 @@ function searchDocuments(req, res) {
  */
 function listFeedbacks(req, res) {
   const db = req.db;
-  const { page = 1, limit = 20 } = req.query;
+  const { page = 1, limit = 20, rating = '' } = req.query;
   const offset = (Number(page) - 1) * Number(limit);
   const limitNum = Number(limit);
 
@@ -492,6 +498,16 @@ function listFeedbacks(req, res) {
     params.push(req.user.id);
   }
 
+  // rating 筛选
+  if (rating) {
+    if (rating === 'none') {
+      whereClauses.push("(f.rating IS NULL OR f.rating = '' OR f.rating = 'none')");
+    } else {
+      whereClauses.push('f.rating = ?');
+      params.push(rating);
+    }
+  }
+
   const whereSQL = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
 
   const countRow = db.prepare(
@@ -499,9 +515,11 @@ function listFeedbacks(req, res) {
   ).get(...params);
 
   const rows = db.prepare(
-    `SELECT f.*, u.username, u.real_name as user_name
+    `SELECT f.*, u.username, u.real_name as user_name,
+            fav.id as favorite_id
      FROM ai_feedbacks f
      LEFT JOIN users u ON u.id = f.user_id
+     LEFT JOIN ai_favorites fav ON fav.feedback_id = f.id
      ${whereSQL}
      ORDER BY f.created_at DESC
      LIMIT ? OFFSET ?`
@@ -577,5 +595,176 @@ router.post('/documents/:id/rollback/:versionId', adminRequired, rollbackDocumen
 
 // ---- 反馈工单 ----
 router.get('/feedbacks', listFeedbacks);
+
+// 导出反馈评分（仅管理员）
+router.get('/feedbacks/export', adminRequired, (req, res) => {
+  try {
+    const db = req.db;
+    const rows = db.prepare(
+      `SELECT f.*, u.username, u.real_name as user_name
+       FROM ai_feedbacks f
+       LEFT JOIN users u ON u.id = f.user_id
+       ORDER BY f.created_at DESC`
+    ).all();
+
+    const header = ['用户', '关联文档', '评分', '反馈内容', '问题', '时间'];
+    const csvRows = [header.join(',')];
+    for (const r of rows) {
+      const ratingLabel = r.rating === 'like' ? '满意' : r.rating === 'dislike' ? '不满意' : '无评分';
+      const time = r.created_at ? new Date(r.created_at).toLocaleString('zh-CN') : '';
+      csvRows.push([
+        csvEscape(r.user_name || r.username || '-'),
+        csvEscape(r.doc_title || '-'),
+        csvEscape(ratingLabel),
+        csvEscape(r.content || r.comment || '-'),
+        csvEscape(r.question || '-'),
+        csvEscape(time),
+      ].join(','));
+    }
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename=feedbacks_${new Date().toISOString().split('T')[0]}.csv`);
+    res.send('\uFEFF' + csvRows.join('\n'));
+  } catch (err) {
+    console.error('[feedbacks/export] Error:', err);
+    res.status(500).json({ code: 500, message: '导出失败' });
+  }
+});
+
+// ---- Excel批量导入 ----
+const multer = require('multer');
+const XLSX = require('xlsx');
+const uploadExcel = multer({ dest: 'uploads/kb/' });
+
+/**
+ * POST /knowledge/import-excel
+ * 批量导入Excel知识库文件
+ */
+router.post('/import-excel', authRequired, adminRequired, uploadExcel.single('file'), async (req, res) => {
+  try {
+    const db = req.db;
+    const file = req.file;
+    if (!file) {
+      return res.status(400).json({ code: 400, message: '请上传Excel文件' });
+    }
+
+    // 解析Excel
+    const workbook = XLSX.readFile(file.path);
+    const allRecords = [];
+    let categoryName = '';
+    
+    // 从文件名提取分类名
+    const originalName = req.file.originalname || '';
+    const fileNameMatch = originalName.match(/^(.+?)\.xlsx?$/i);
+    if (fileNameMatch) {
+      categoryName = fileNameMatch[1].replace(/[\/\\?*:|"<>]/g, '_');
+    } else {
+      categoryName = '导入知识库';
+    }
+
+    // 遍历所有Sheet
+    workbook.SheetNames.forEach(sheetName => {
+      const ws = workbook.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
+      if (data.length < 2) return; // 跳过空表
+      
+      const headers = data[0];
+      
+      // 解析每一行数据
+      for (let i = 1; i < data.length; i++) {
+        const row = data[i];
+        if (!row || row.length === 0) continue;
+        
+        // 构建文档对象
+        const record = {
+          sheet: sheetName,
+          headers: headers,
+          data: row,
+          title: '',
+          content: '',
+          keywords: ''
+        };
+        
+        // 根据表头智能提取内容
+        headers.forEach((h, idx) => {
+          const val = row[idx];
+          if (val === undefined || val === null) return;
+          
+          const headerLower = String(h).toLowerCase();
+          
+          // 提取标题
+          if (['标题', '主题', '问题', '具体难题', '知识点'].includes(h)) {
+            record.title = String(val);
+          }
+          // 提取内容
+          else if (['内容', '详细内容', '答案', '答案（思路+关键点）', '话术（白话）', '核心定义/要点'].includes(h)) {
+            record.content = (record.content ? record.content + '\n' : '') + String(val);
+          }
+          // 提取关键词
+          else if (['关键词', '标签'].includes(h)) {
+            record.keywords = String(val);
+          }
+        });
+        
+        // 如果没有提取到标题，用第一个非空字段
+        if (!record.title) {
+          record.title = row.find(v => v !== undefined && v !== null && String(v).trim()) 
+            ? String(row.find(v => v !== undefined && v !== null && String(v).trim())).substring(0, 50)
+            : `记录 ${i}`;
+        }
+        
+        // 如果没有提取到内容，把整行数据格式化
+        if (!record.content) {
+          record.content = headers.map((h, idx) => `${h}: ${row[idx] || ''}`).join('\n');
+        }
+        
+        allRecords.push(record);
+      }
+    });
+
+    // 创建或获取分类
+    let category = db.prepare('SELECT * FROM kb_categories WHERE name = ?').get(categoryName);
+    if (!category) {
+      const catId = uuidv4();
+      db.prepare('INSERT INTO kb_categories (id, name, sort_order) VALUES (?, ?, ?)').run(catId, categoryName, 0);
+      category = { id: catId, name: categoryName };
+    }
+
+    // 批量插入文档
+    let inserted = 0;
+    const now = new Date().toISOString();
+    
+    for (const record of allRecords) {
+      const docId = uuidv4();
+      const content = `【${record.title}】\n\n${record.content}`;
+      
+      db.prepare(`
+        INSERT INTO kb_documents (id, category_id, title, content, version, is_current, status, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, 1, 'published', ?, ?, ?)
+      `).run(docId, category.id, record.title, content, req.user.id, now, now);
+      
+      inserted++;
+    }
+
+    // 清理临时文件
+    const fs = require('fs');
+    try { fs.unlinkSync(file.path); } catch (e) {}
+
+    logActivity(db, req.user.id, 'import_excel', 'category', category.id, 
+      JSON.stringify({ file: originalName, records: inserted }), req.ip);
+
+    res.json({ 
+      code: 0, 
+      message: '导入成功', 
+      data: { 
+        category: category.name, 
+        total: allRecords.length, 
+        inserted 
+      } 
+    });
+  } catch (err) {
+    console.error('[knowledge/import-excel] Error:', err);
+    res.status(500).json({ code: 500, message: '导入失败: ' + err.message });
+  }
+});
 
 module.exports = router;
