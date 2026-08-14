@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Play, FileText, File, Clock, BookOpen, ChevronRight,
   X, CheckCircle, Circle, BarChart3, Loader2, AlertCircle,
-  ExternalLink, RefreshCw, Flag, Download,
+  ExternalLink, RefreshCw, Flag, Download, MessageCircle,
 } from 'lucide-react';
 import api from '../../api';
 import PDFViewer from '../../components/PDFViewer';
+import ShareCircle from '../../components/ShareCircle';
 
 // 课程类型图标与颜色
 const TYPE_CONFIG = {
@@ -47,6 +48,7 @@ export default function Learning() {
   const [roadmapLoading, setRoadmapLoading] = useState(false);
   const [progressLoading, setProgressLoading] = useState({});
   const [error, setError] = useState('');
+  const [activeTab, setActiveTab] = useState('courses'); // 'courses' | 'shares'
   const videoRef = useRef(null);
   const lastProgressRef = useRef(0);
 
@@ -194,7 +196,40 @@ export default function Learning() {
     <div className="flex flex-col flex-1 min-h-0 gap-4 md:gap-6 md:flex-row">
       {/* ===== 左侧：课程主区域 ===== */}
       <div className="flex-1 min-w-0 min-h-0 flex flex-col">
-        <h2 className="page-title mb-6 shrink-0">销冠闯关秘籍</h2>
+        {/* 顶部 Tab 切换 */}
+        <div className="flex items-center gap-6 mb-6 shrink-0">
+          <h2 className="page-title">销冠闯关秘籍</h2>
+          <div className="flex gap-1 bg-warm-100/60 rounded-xl p-1">
+            <button
+              onClick={() => setActiveTab('courses')}
+              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${
+                activeTab === 'courses'
+                  ? 'bg-white text-primary-700 shadow-sm'
+                  : 'text-warm-500 hover:text-warm-700'
+              }`}
+            >
+              课程
+            </button>
+            <button
+              onClick={() => setActiveTab('shares')}
+              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition flex items-center gap-1.5 ${
+                activeTab === 'shares'
+                  ? 'bg-white text-primary-700 shadow-sm'
+                  : 'text-warm-500 hover:text-warm-700'
+              }`}
+            >
+              <MessageCircle size={16} />
+              分享圈
+            </button>
+          </div>
+        </div>
+
+        {/* 分享圈内容 */}
+        {activeTab === 'shares' && <ShareCircle />}
+
+        {/* 课程内容 */}
+        {activeTab === 'courses' && (
+        <>
 
         {/* 滚动容器 */}
         <div className="flex-1 min-h-0 overflow-y-auto">
@@ -397,9 +432,12 @@ export default function Learning() {
           </div>
         )}
         </div>
+      </>
+      )}
       </div>
 
       {/* ===== 右侧：通关路线图 ===== */}
+      {activeTab === 'courses' && (
       <aside className="w-64 shrink-0 hidden xl:block">
         <div className="card sticky top-6">
           <div className="flex items-center gap-2 mb-4">
@@ -461,9 +499,10 @@ export default function Learning() {
           )}
         </div>
       </aside>
+      )}
 
       {/* ===== 课程详情弹窗 ===== */}
-      {showDetail && selectedCourse && (
+      {activeTab === 'courses' && showDetail && selectedCourse && (
         <div className="fixed inset-0 z-50 flex items-stretch md:items-center justify-center bg-black/50 p-0 md:p-4">
           <div className="bg-white md:rounded-2xl shadow-2xl w-full h-screen md:h-auto md:max-h-[90vh] flex flex-col overflow-hidden md:mx-4 md:max-w-3xl"
             style={{ height: '100dvh' }}>

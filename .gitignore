@@ -35,3 +35,24 @@ Thumbs.db
 
 # Uploads
 uploads/
+
+# Secrets (never commit)
+ecosystem.config.js
+接手文档.md
+
+# Scratch / one-off scripts
+check-*.js
+cleanup-kb.js
+server/import-kb*.js
+server/migrate-*.js
+server/latency-test.js
+server/stress-test.js
+server/test-login.js
+server/check-courses-local.js
+*.sh
+*.py
+
+# Data / documents
+*.xlsx
+*.docx
+安全评估报告*.md

@@ -68,7 +68,8 @@ router.post('/login', loginLimiter(5, 60000), (req, res) => {
     id: user.id,
     username: user.username,
     role: user.role,
-    real_name: user.real_name
+    real_name: user.real_name,
+    group_id: user.group_id || null
   });
 
   const { password: _, ...safeUser } = user;

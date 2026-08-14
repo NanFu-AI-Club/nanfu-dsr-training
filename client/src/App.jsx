@@ -20,6 +20,7 @@ import AdminPointRules from './pages/admin/PointRules';
 import AdminRadarDimensions from './pages/admin/RadarDimensions';
 import AdminShop from './pages/admin/Shop';
 import AdminSubmissions from './pages/admin/Submissions';
+import AdminShares from './pages/admin/Shares';
 
 // 业务员页面
 import SalesCheckIn from './pages/sales/CheckIn';
@@ -60,6 +61,7 @@ export default function App() {
         <Route path="chat-logs" element={<AdminChatLogs />} />
         <Route path="logs" element={<AdminLogs />} />
         <Route path="submissions" element={<AdminSubmissions />} />
+        <Route path="shares" element={<AdminShares />} />
       </Route>
       <Route path="/sales/*" element={<ProtectedRoute role="sales"><SalesLayout /></ProtectedRoute>}>
         <Route index element={<SalesChat />} />

@@ -297,9 +297,28 @@ CREATE TABLE IF NOT EXISTS submissions (
   file_url TEXT NOT NULL DEFAULT '',
   category TEXT NOT NULL DEFAULT 'other',
   link_url TEXT DEFAULT '',
+  cos_key TEXT,
   status TEXT NOT NULL DEFAULT 'pending',
   review_comment TEXT, reviewed_by TEXT REFERENCES users(id),
   reviewed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS shares (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
+  content TEXT NOT NULL,
+  images TEXT DEFAULT '[]',
+  likes_count INTEGER DEFAULT 0,
+  is_pinned INTEGER DEFAULT 0,
+  deleted INTEGER DEFAULT 0,
+  group_id TEXT REFERENCES groups(id),
+  group_name TEXT,
+  created_at DATETIME DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS share_likes (
+  id TEXT PRIMARY KEY,
+  share_id TEXT NOT NULL REFERENCES shares(id),
+  user_id TEXT NOT NULL REFERENCES users(id),
+  created_at DATETIME DEFAULT (datetime('now','localtime')),
+  UNIQUE(share_id, user_id)
 );
 `;
 
@@ -327,6 +346,11 @@ const INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_ai_feedbacks_user ON ai_feedbacks(user_id)',
   'CREATE INDEX IF NOT EXISTS idx_check_ins_user ON check_ins(user_id)',
   'CREATE INDEX IF NOT EXISTS idx_check_ins_date ON check_ins(check_date)',
+  'CREATE INDEX IF NOT EXISTS idx_shares_user ON shares(user_id)',
+  'CREATE INDEX IF NOT EXISTS idx_shares_created ON shares(created_at)',
+  'CREATE INDEX IF NOT EXISTS idx_share_likes_share ON share_likes(share_id)',
+  'CREATE INDEX IF NOT EXISTS idx_share_likes_user ON share_likes(user_id)',
+  'CREATE INDEX IF NOT EXISTS idx_shares_group ON shares(group_id)',
 ];
 
 // ==================== 种子数据 ====================
@@ -460,7 +484,10 @@ async function initDatabase(reset = false, withSeed = false) {
       { table: 'submissions', column: 'link_url', sql: "ALTER TABLE submissions ADD COLUMN link_url TEXT DEFAULT ''" },
       { table: 'users', column: 'total_earned_points', sql: 'ALTER TABLE users ADD COLUMN total_earned_points INTEGER DEFAULT 0' },
       { table: 'ai_feedbacks', column: 'sources', sql: 'ALTER TABLE ai_feedbacks ADD COLUMN sources TEXT' },
-    ];
+  { table: 'submissions', column: 'cos_key', sql: 'ALTER TABLE submissions ADD COLUMN cos_key TEXT' },
+      { table: 'shares', column: 'group_id', sql: 'ALTER TABLE shares ADD COLUMN group_id TEXT REFERENCES groups(id)' },
+      { table: 'shares', column: 'group_name', sql: 'ALTER TABLE shares ADD COLUMN group_name TEXT' },
+];
     migrations.forEach(m => {
       try {
         const cols = sqlDb.exec(`PRAGMA table_info(${m.table})`);

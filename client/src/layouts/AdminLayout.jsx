@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LayoutDashboard, BookOpen, HelpCircle, FileText, PlaySquare, Bot, MessageSquare, Users, ScrollText, LogOut, Menu, X, Cloud, Award, Target, KeyRound, ShoppingBag, ClipboardList, Camera } from 'lucide-react';
+import { LayoutDashboard, BookOpen, HelpCircle, FileText, PlaySquare, Bot, MessageSquare, Users, ScrollText, LogOut, Menu, X, Cloud, Award, Target, KeyRound, ShoppingBag, ClipboardList, Camera, Share2 } from 'lucide-react';
 import ChangePasswordModal from '../components/ChangePasswordModal';
 
 const menuItems = [
@@ -19,6 +19,7 @@ const menuItems = [
   { path: '/admin/shop', icon: ShoppingBag, label: '积分商城' },
   { path: '/admin/chat-logs', icon: Cloud, label: '智囊对话' },
   { path: '/admin/submissions', icon: Camera, label: '风采投稿' },
+  { path: '/admin/shares', icon: Share2, label: '分享圈管理' },
   { path: '/admin/logs', icon: ScrollText, label: '活动日志' },
 ];
 

@@ -93,6 +93,7 @@ initDatabase(false, true).then((db) => {
   app.use('/api/dashboard', authRequired, require('./routes/dashboard'));
   app.use('/api/logs', authRequired, adminRequired, require('./routes/logs'));
   app.use('/api/submissions', authRequired, require('./routes/submissions'));
+  app.use('/api/shares', authRequired, require('./routes/shares'));
   app.use('/api', require('./routes/video-proxy'));   // 视频代理
 
   // SPA 回退

@@ -184,7 +184,7 @@ export default function PointRules() {
             <MessageSquare size={16} className="text-purple-500 mt-0.5 shrink-0" />
             <div>
               <p className="font-medium text-warm-800">AI 陪练</p>
-              <p className="text-warm-500 text-xs mt-0.5">完成一次 AI 陪练场景后获得固定积分奖励。</p>
+              <p className="text-warm-500 text-xs mt-0.5">完成陪练后按得分比例获取积分。积分 = 配置分值 × (得分/100)，保底1分。</p>
             </div>
           </div>
           <div className="flex items-start gap-3 p-3 bg-warm-50/80 rounded-xl">

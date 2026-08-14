@@ -866,11 +866,17 @@ router.post('/sessions/:id/end', authRequired, async (req, res) => {
     ).get(req.user.id, id);
     let earnedPoints = 0;
     if (!alreadyAwarded) {
-      earnedPoints = Math.max(5, Math.floor(evaluation.total_score / 10));
+      // 从积分规则表读取陪练最高积分
+      const rule = db.prepare(
+        `SELECT points FROM point_rules WHERE source_type = 'training_complete' AND enabled = 1`
+      ).get();
+      const maxPoints = rule ? rule.points : 10;
+      // 按得分比例计算：得分满分100，积分 = 最高积分 × (得分/100)
+      earnedPoints = Math.max(1, Math.floor(maxPoints * evaluation.total_score / 100));
       db.prepare(`
         INSERT INTO point_logs (id, user_id, points, reason, source_type, source_id)
         VALUES (?, ?, ?, ?, ?, ?)
-      `).run(uuidv4(), req.user.id, earnedPoints, `完成陪练: ${session.scenario_title}`, 'training', id);
+      `).run(uuidv4(), req.user.id, earnedPoints, `完成陪练: ${session.scenario_title} (得分${evaluation.total_score})`, 'training', id);
       db.prepare('UPDATE users SET points = points + ?, total_earned_points = total_earned_points + ? WHERE id = ?').run(earnedPoints, earnedPoints, req.user.id);
     }
 
@@ -1021,7 +1027,8 @@ router.get('/admin/sessions', authRequired, adminRequired, (req, res) => {
     const sessions = db.prepare(`
       SELECT ts.*, u.username, u.real_name,
              tsc.title as scenario_title, tsc.role_type, tsc.difficulty,
-             (SELECT tr.total_score FROM training_reports tr WHERE tr.session_id = ts.id) as report_score
+             (SELECT tr.total_score FROM training_reports tr WHERE tr.session_id = ts.id) as report_score,
+             (SELECT pl.points FROM point_logs pl WHERE pl.user_id = ts.user_id AND pl.source_type = 'training' AND pl.source_id = ts.id) as earned_points
       FROM training_sessions ts
       LEFT JOIN users u ON ts.user_id = u.id
       JOIN training_scenarios tsc ON ts.scenario_id = tsc.id
