@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import api from '../../api';
+import { todayShanghai } from '../../utils/time';
 import { Search, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, User, Clock, ThumbsUp, ThumbsDown, Loader2, Minus, Download, Star, BookOpen } from 'lucide-react';
 
 export default function AdminChatLogs() {
@@ -18,6 +19,13 @@ export default function AdminChatLogs() {
   const [feedbacks, setFeedbacks] = useState([]);
   const [feedbackFilter, setFeedbackFilter] = useState('all');
   const [fbLoading, setFbLoading] = useState(false);
+
+  // ---- 没用反馈 ----
+  const [dislikes, setDislikes] = useState([]);
+  const [dislikeLoading, setDislikeLoading] = useState(false);
+  const [dislikeOpen, setDislikeOpen] = useState({});
+  const [dislikeDetail, setDislikeDetail] = useState({});
+  const [dislikeDetailLoading, setDislikeDetailLoading] = useState({});
 
   useEffect(() => {
     if (tab === 'conversations') loadLogs();
@@ -83,6 +91,45 @@ export default function AdminChatLogs() {
     if (tab === 'feedbacks') fetchFeedbacks();
   }, [tab, fetchFeedbacks]);
 
+  const fetchDislikes = useCallback(async () => {
+    setDislikeLoading(true);
+    try {
+      const res = await api.get('/ai/admin/dislikes');
+      const data = res?.data || res;
+      const list = Array.isArray(data) ? data : (data?.list || []);
+      setDislikes(list);
+    } catch (err) {
+      console.error('获取没用反馈失败:', err);
+    } finally {
+      setDislikeLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab === 'dislikes') fetchDislikes();
+  }, [tab, fetchDislikes]);
+
+  // 展开/收起某条「没用反馈」所属的完整对话
+  const toggleDislikeConversation = async (d) => {
+    const key = d.id;
+    if (dislikeOpen[key]) {
+      setDislikeOpen(prev => ({ ...prev, [key]: false }));
+      return;
+    }
+    setDislikeOpen(prev => ({ ...prev, [key]: true }));
+    if (dislikeDetail[key] || !d.conversation_id) return;
+    setDislikeDetailLoading(prev => ({ ...prev, [key]: true }));
+    try {
+      const res = await api.get(`/ai/admin/conversations/${d.conversation_id}`);
+      const list = res?.code === 0 ? (res.data || []) : [];
+      setDislikeDetail(prev => ({ ...prev, [key]: list }));
+    } catch {
+      setDislikeDetail(prev => ({ ...prev, [key]: [] }));
+    } finally {
+      setDislikeDetailLoading(prev => ({ ...prev, [key]: false }));
+    }
+  };
+
   const totalPages = Math.ceil(total / pageSize);
 
   const formatTime = (t) => {
@@ -109,12 +156,18 @@ export default function AdminChatLogs() {
   };
 
   const handleExport = (type) => {
-    const url = type === 'feedbacks' ? '/knowledge/feedbacks/export' : '/ai/admin/conversations/export';
+    const urls = {
+      feedbacks: '/knowledge/feedbacks/export',
+      conversations: '/ai/admin/conversations/export',
+      dislikes: '/ai/admin/dislikes/export',
+    };
+    const url = urls[type];
+    if (!url) return;
     api.get(url, { responseType: 'blob' }).then(res => {
       const blob = res.data || res;
       const a = document.createElement('a');
       a.href = window.URL.createObjectURL(blob);
-      a.download = `${type}_${new Date().toISOString().split('T')[0]}.csv`;
+      a.download = `${type}_${todayShanghai()}.csv`;
       a.click();
       a.remove();
     }).catch(err => alert('导出失败: ' + (err?.message || '未知错误')));
@@ -139,8 +192,8 @@ export default function AdminChatLogs() {
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-warm-900">智囊对话记录</h1>
-          <p className="text-sm text-warm-500 mt-1">查看业务员在智囊小助手中的所有对话和反馈</p>
+          <h1 className="text-2xl font-bold text-warm-900">跑店问问对话记录</h1>
+          <p className="text-sm text-warm-500 mt-1">查看业务员在跑店问问中的所有对话和反馈</p>
         </div>
         {/* Tab 切换 */}
         <div className="flex bg-warm-100 rounded-xl p-1">
@@ -159,6 +212,14 @@ export default function AdminChatLogs() {
             }`}
           >
             反馈评分
+          </button>
+          <button
+            onClick={() => setTab('dislikes')}
+            className={`px-4 py-1.5 rounded-xl text-sm font-medium transition ${
+              tab === 'dislikes' ? 'bg-white shadow text-warm-900' : 'text-warm-500'
+            }`}
+          >
+            没用反馈
           </button>
         </div>
       </div>
@@ -193,7 +254,7 @@ export default function AdminChatLogs() {
           <div className="text-center py-16 bg-white/60 rounded-2xl border border-warm-100/60">
             <MessageSquare size={40} className="mx-auto mb-3 text-warm-300" />
             <p className="text-warm-500">暂无对话记录</p>
-            <p className="text-warm-400 text-sm mt-1">业务员开始使用智囊小助手后，对话记录将显示在这里</p>
+            <p className="text-warm-400 text-sm mt-1">业务员开始使用跑店问问后，对话记录将显示在这里</p>
           </div>
         ) : (
           <div className="space-y-3">
@@ -260,7 +321,7 @@ export default function AdminChatLogs() {
                                   )}
                                   {msg.rating === 'dislike' && (
                                     <span className="flex items-center gap-0.5 text-[10px] text-rose-500">
-                                      <ThumbsDown size={10} /> 差评
+                                      <ThumbsDown size={10} /> 没用
                                     </span>
                                   )}
                                   {msg.favorite_id && (
@@ -269,6 +330,12 @@ export default function AdminChatLogs() {
                                     </span>
                                   )}
                                 </div>
+                                {msg.feedback_reason && (
+                                  <div className="mt-2 px-3 py-2 bg-rose-50/70 border border-rose-100 rounded-lg">
+                                    <span className="text-[10px] font-medium text-rose-500">反馈原因：</span>
+                                    <span className="text-xs text-warm-700 break-words">{msg.feedback_reason}</span>
+                                  </div>
+                                )}
                                 {(() => {
                                   const srcs = parseSources(msg.sources);
                                   return srcs.length > 0 ? (
@@ -409,6 +476,105 @@ export default function AdminChatLogs() {
                     </tr>
                     );
                   })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========== 没用反馈 ========== */}
+      {tab === 'dislikes' && (
+        <div className="bg-white/80 backdrop-blur-xl rounded-2xl border border-warm-100/60 overflow-hidden">
+          <div className="p-4 border-b border-warm-100/60 flex items-center justify-between flex-wrap gap-2">
+            <p className="text-sm text-warm-500">业务员标记「没用」的对话记录与反馈原因（含语音转文字），可展开查看该次完整对话</p>
+            <button onClick={() => handleExport('dislikes')} className="btn-secondary flex items-center gap-1.5 text-sm shrink-0">
+              <Download size={15} /> 导出CSV
+            </button>
+          </div>
+          <div className="overflow-auto">
+            <table className="w-full">
+              <thead>
+                <tr>
+                  <th className="table-header w-28">用户</th>
+                  <th className="table-header">对话记录（问 / 答）</th>
+                  <th className="table-header w-64">反馈原因</th>
+                  <th className="table-header w-36">时间</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-warm-100">
+                {dislikeLoading ? (
+                  <tr>
+                    <td colSpan={4} className="text-center py-12">
+                      <Loader2 size={20} className="animate-spin text-warm-400 mx-auto" />
+                    </td>
+                  </tr>
+                ) : dislikes.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="text-center py-12 text-sm text-warm-400">暂无「没用」反馈</td>
+                  </tr>
+                ) : (
+                  dislikes.map((d, idx) => (
+                    <Fragment key={d.id || idx}>
+                      <tr className="hover:bg-warm-50/80 align-top">
+                        <td className="table-cell font-medium">{d.real_name || d.username || '-'}</td>
+                        <td className="table-cell">
+                          <div className="space-y-2">
+                            <div className="flex items-start gap-2">
+                              <span className="shrink-0 mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-50 text-sky-600">问</span>
+                              <p className="text-sm text-warm-800 whitespace-pre-wrap break-words">{d.question || '-'}</p>
+                            </div>
+                            <div className="flex items-start gap-2">
+                              <span className="shrink-0 mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-600">答</span>
+                              <p className="text-sm text-warm-600 whitespace-pre-wrap break-words">{truncate(d.answer, 300) || '-'}</p>
+                            </div>
+                            {d.conversation_id && (
+                              <button
+                                onClick={() => toggleDislikeConversation(d)}
+                                className="flex items-center gap-1 text-xs text-primary-600 hover:text-primary-700"
+                              >
+                                {dislikeOpen[d.id] ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                                {dislikeOpen[d.id] ? '收起完整对话' : '查看完整对话'}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        <td className="table-cell">
+                          <div className="px-3 py-2 bg-rose-50/70 border border-rose-100 rounded-lg text-xs text-warm-700 whitespace-pre-wrap break-words">{d.feedback_reason}</div>
+                        </td>
+                        <td className="table-cell text-xs text-warm-400">{formatTime(d.created_at)}</td>
+                      </tr>
+                      {dislikeOpen[d.id] && (
+                        <tr className="bg-warm-50/60">
+                          <td colSpan={4} className="px-4 py-3">
+                            {dislikeDetailLoading[d.id] ? (
+                              <div className="flex items-center gap-2 text-xs text-warm-400">
+                                <Loader2 size={14} className="animate-spin" /> 加载完整对话中...
+                              </div>
+                            ) : (
+                              <div className="space-y-3">
+                                {(dislikeDetail[d.id] || []).map((m, i) => (
+                                  <div key={m.id || i} className="space-y-1">
+                                    <div className="flex items-start gap-2">
+                                      <span className="shrink-0 mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-50 text-sky-600">问</span>
+                                      <p className="text-sm text-warm-800 whitespace-pre-wrap break-words">{m.question}</p>
+                                    </div>
+                                    <div className="flex items-start gap-2">
+                                      <span className="shrink-0 mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-600">答</span>
+                                      <p className="text-sm text-warm-700 whitespace-pre-wrap break-words">{m.answer}</p>
+                                    </div>
+                                  </div>
+                                ))}
+                                {(dislikeDetail[d.id] || []).length === 0 && (
+                                  <p className="text-xs text-warm-400">未获取到完整对话</p>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  ))
                 )}
               </tbody>
             </table>

@@ -47,14 +47,14 @@ export default {
         warm: {
           50: '#faf8f5',
           100: '#f5f0e8',
-          200: '#ebe0cf',
-          300: '#dbc8a8',
-          400: '#c9ae7e',
-          500: '#b8945d',
-          600: '#a68052',
-          700: '#8a6845',
-          800: '#71563c',
-          900: '#5e4834',
+          200: '#e5d8c5',
+          300: '#cdb694',
+          400: '#8a6b48',
+          500: '#6d5136',
+          600: '#5c4630',
+          700: '#4a3828',
+          800: '#352820',
+          900: '#221a15',
         },
       },
       borderRadius: {
@@ -82,6 +82,7 @@ export default {
         'pulse-soft': 'pulseSoft 2s ease-in-out infinite',
         'cloud-drift': 'cloudDrift 30s linear infinite',
         'cloud-drift-slow': 'cloudDrift 45s linear 10s infinite',
+        'bounce-in': 'bounceIn 0.4s ease-out',
       },
       keyframes: {
         float: {
@@ -107,6 +108,11 @@ export default {
         cloudDrift: {
           '0%': { transform: 'translateX(-10%)' },
           '100%': { transform: 'translateX(110%)' },
+        },
+        bounceIn: {
+          '0%': { opacity: '0', transform: 'translate(-50%, -10px) scale(0.9)' },
+          '60%': { opacity: '1', transform: 'translate(-50%, 2px) scale(1.03)' },
+          '100%': { opacity: '1', transform: 'translate(-50%, 0) scale(1)' },
         },
       },
     },

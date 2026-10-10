@@ -1,15 +1,17 @@
 import { useState, useEffect } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { MessageSquare, GraduationCap, FileText, Users, BarChart3, User, LogOut, Zap, Star, CheckCircle, XCircle, Award, X, KeyRound, ShoppingBag, CalendarDays, Flame, Gift, Check, Loader2, ChevronLeft, ChevronRight, Sparkles, Camera } from 'lucide-react';
+import { MessageSquare, GraduationCap, FileText, Users, BarChart3, User, LogOut, Zap, Star, CheckCircle, XCircle, Award, X, KeyRound, ShoppingBag, CalendarDays, Flame, Gift, Check, Loader2, ChevronLeft, ChevronRight, Sparkles, Camera, Share2, Megaphone } from 'lucide-react';
 import api from '../api';
 import ChangePasswordModal from '../components/ChangePasswordModal';
 
 const menuItems = [
-  { path: '/sales/chat', icon: MessageSquare, label: '智囊小助手' },
+  { path: '/sales/chat', icon: MessageSquare, label: '跑店问问' },
+  { path: '/sales/training', icon: Users, label: 'FU利陪陪' },
+  { path: '/sales/shares', icon: Share2, label: '分享圈' },
+  { path: '/sales/announcements', icon: Megaphone, label: '公告' },
   { path: '/sales/learning', icon: GraduationCap, label: '销冠闯关秘籍' },
   { path: '/sales/exam', icon: FileText, label: '销冠答题挑战赛' },
-  { path: '/sales/training', icon: Users, label: '模拟门店实战对练' },
   { path: '/sales/submission', icon: Camera, label: '风采投稿' },
   { path: '/sales/statistics', icon: BarChart3, label: '我的销冠成长榜' },
   { path: '/sales/profile', icon: User, label: '我的画像' },
@@ -373,11 +375,56 @@ function DailyQuestionModal({ onClose }) {
 export default function SalesLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
+  const canUseAdminExperience = user?.role === 'admin' && user?.manager_type !== 'city_manager';
   const [showCheckInPopup, setShowCheckInPopup] = useState(false);
   const [showDailyQuestion, setShowDailyQuestion] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [notices, setNotices] = useState([]);
+  const [announceNotices, setAnnounceNotices] = useState([]);
+  const [announceUnread, setAnnounceUnread] = useState(0);
   const handleLogout = () => { logout(); navigate('/login'); };
+
+  // 拉取未读通知（如管理员调整积分）与未读公告，登录后弹窗提醒
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [notiRes, annRes] = await Promise.all([
+          api.get('/notifications/unread').catch(() => null),
+          api.get('/announcements/unread').catch(() => null),
+        ]);
+        const list = notiRes?.data || notiRes || [];
+        if (!cancelled && Array.isArray(list) && list.length > 0) setNotices(list);
+        const annList = annRes?.data || [];
+        if (!cancelled && Array.isArray(annList) && annList.length > 0) setAnnounceNotices(annList);
+      } catch (_) { /* 静默失败，不打扰用户 */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // 侧边栏公告红点（进入页面/切换路由后刷新）
+  const location = useLocation();
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get('/announcements/unread-count');
+        if (!cancelled) setAnnounceUnread(res?.data?.count || 0);
+      } catch (_) { /* 忽略 */ }
+    })();
+    return () => { cancelled = true; };
+  }, [location.pathname]);
+
+  const dismissNotices = async () => {
+    const ids = notices.map((n) => n.id);
+    setNotices([]);
+    setAnnounceNotices([]);
+    setAnnounceUnread(0);
+    try {
+      if (ids.length > 0) await api.post('/notifications/read', { ids });
+      await api.post('/announcements/read-all');
+    } catch (_) { /* 忽略 */ }
+  };
 
   // 登录后弹出签到面板（替代每日一题）
   useEffect(() => {
@@ -400,7 +447,7 @@ export default function SalesLayout() {
         </div>
         <div className="min-w-0">
           <div className="font-bold text-sm text-warm-800 truncate">终端跑店宝典</div>
-          <div className="text-[11px] text-warm-400 truncate">智能培训助手</div>
+          <div className="text-[11px] text-warm-500 truncate">智能培训助手</div>
         </div>
       </div>
 
@@ -408,9 +455,9 @@ export default function SalesLayout() {
       <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-0.5">
         {menuItems.map((item) => (
           <NavLink
-            key={item.path}
-            to={item.path}
-            className={({ isActive }) =>
+              key={item.path}
+              to={item.path}
+              className={({ isActive }) =>
               `flex items-center gap-3 px-3 py-3 rounded-xl text-sm transition-all duration-200 ${
                 isActive
                   ? 'bg-gradient-to-r from-sky-50 to-primary-50 text-primary-700 font-medium shadow-inner-soft'
@@ -420,6 +467,11 @@ export default function SalesLayout() {
           >
             <item.icon size={18} className="shrink-0" />
             <span className="truncate">{item.label}</span>
+            {item.path === '/sales/announcements' && announceUnread > 0 && (
+              <span className="ml-auto shrink-0 min-w-[18px] h-[18px] px-1.5 rounded-full bg-rose-500 text-white text-[10px] font-medium flex items-center justify-center">
+                {announceUnread > 99 ? '99+' : announceUnread}
+              </span>
+            )}
           </NavLink>
         ))}
 
@@ -463,6 +515,15 @@ export default function SalesLayout() {
 
       {/* 底部用户区 */}
       <div className="border-t border-warm-100/60 p-3 shrink-0">
+        {canUseAdminExperience && (
+          <button
+            onClick={() => navigate('/admin')}
+            className="flex items-center gap-2.5 text-sm text-primary-600 hover:text-primary-700 transition-all duration-200 w-full px-3 py-2 rounded-xl hover:bg-primary-50 mb-2"
+          >
+            <Users size={16} />
+            进入管理后台
+          </button>
+        )}
         <div className="flex items-center gap-3 mb-3 px-2">
           <div className="w-9 h-9 bg-gradient-to-br from-sky-200 to-primary-300 rounded-full flex items-center justify-center text-primary-700 text-sm font-bold shrink-0 shadow-soft">
             {user?.real_name?.[0] || 'S'}
@@ -470,7 +531,7 @@ export default function SalesLayout() {
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium text-warm-800 truncate">{user?.real_name}</div>
             <div className="flex items-center gap-1.5">
-              <span className="text-xs text-warm-400">业务员</span>
+              <span className="text-xs text-warm-400">{user?.manager_type === 'region_manager' ? '大区经理' : user?.manager_type === 'area_manager' ? '区域经理' : user?.manager_type === 'system_admin' ? '系统管理员' : '业务员'}</span>
               <span className="text-[10px] text-warm-300">·</span>
               <span className="text-xs text-accent-600 font-medium flex items-center gap-0.5">
                 <Star size={10} className="fill-accent-400" />
@@ -497,29 +558,29 @@ export default function SalesLayout() {
     </>
   );
 
-  // 移动端底部导航
-  const mobileNavItems = [
-    { path: '/sales/chat', icon: MessageSquare, label: '智囊' },
-    { path: '/sales/learning', icon: GraduationCap, label: '闯关' },
-    { path: '/sales/training', icon: Users, label: '陪练' },
-    { path: '/sales/exam', icon: FileText, label: '考试' },
-    { path: '/sales/submission', icon: Camera, label: '风采' },
-    { path: '/sales/shop', icon: ShoppingBag, label: '商城' },
-    { path: '/sales/statistics', icon: BarChart3, label: '成长' },
-    { path: '/sales/profile', icon: User, label: '我的' },
-  ];
-
   return (
     <div className="flex flex-col h-dvh overflow-hidden bg-warm-50">
       {/* ========== 移动端顶部栏 ========== */}
-      <div className="md:hidden shrink-0 z-30 bg-white/80 backdrop-blur-xl border-b border-warm-100/60 px-4 py-2.5 flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="md:hidden shrink-0 z-30 bg-white/80 backdrop-blur-xl border-b border-warm-100/60 px-3 py-2.5 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <div className="w-7 h-7 bg-gradient-to-br from-sky-400 to-primary-600 rounded-lg flex items-center justify-center text-white font-bold text-xs shrink-0">
             跑
           </div>
-          <span className="text-sm font-bold text-warm-800">终端跑店宝典</span>
+          <span className="text-sm font-bold text-warm-800 truncate hidden min-[380px]:inline">终端跑店宝典</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={() => navigate('/sales/announcements')}
+            className="relative p-1.5 rounded-xl bg-sky-50 text-sky-500 transition-all"
+            title="信息公告"
+          >
+            <Megaphone size={18} />
+            {announceUnread > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 rounded-full bg-rose-500 text-white text-[9px] font-medium flex items-center justify-center">
+                {announceUnread > 99 ? '99+' : announceUnread}
+              </span>
+            )}
+          </button>
           <button
             onClick={() => setShowDailyQuestion(true)}
             className="p-1.5 rounded-xl bg-amber-50 text-amber-500 transition-all"
@@ -569,25 +630,11 @@ export default function SalesLayout() {
         </main>
       </div>
 
-      {/* ========== 移动端底部导航 ========== */}
-      <nav className="md:hidden shrink-0 z-40 bg-white/90 backdrop-blur-xl border-t border-warm-100/60 flex items-center justify-around py-1.5 safe-area-bottom">
-        {mobileNavItems.map((item) => {
-          const isActive = location.pathname === item.path;
-          return (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl min-w-0 transition-all duration-200 ${
-                isActive
-                  ? 'text-primary-600'
-                  : 'text-warm-400'
-              }`}
-            >
-              <item.icon size={20} className="shrink-0" strokeWidth={isActive ? 2.5 : 1.5} />
-              <span className={`text-[10px] font-medium ${isActive ? 'text-primary-600' : ''}`}>{item.label}</span>
-            </NavLink>
-          );
-        })}
+      <nav className="md:hidden shrink-0 z-40 bg-white border-t border-warm-100 px-2 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] grid grid-cols-4 gap-1 shadow-[0_-4px_16px_rgba(0,0,0,0.06)]">
+        <NavLink to="/sales/chat" className={({ isActive }) => `flex flex-col items-center gap-1 py-1.5 rounded-xl text-[10px] ${isActive ? 'bg-primary-100 text-primary-800 font-semibold' : 'text-warm-700'}`}><MessageSquare size={18} /><span>跑店问问</span></NavLink>
+        <NavLink to="/sales/training" className={({ isActive }) => `flex flex-col items-center gap-1 py-1.5 rounded-xl text-[10px] ${isActive ? 'bg-primary-100 text-primary-800 font-semibold' : 'text-warm-700'}`}><Users size={18} /><span>FU利陪陪</span></NavLink>
+        <NavLink to="/sales/shares" className={({ isActive }) => `flex flex-col items-center gap-1 py-1.5 rounded-xl text-[10px] ${isActive ? 'bg-primary-100 text-primary-800 font-semibold' : 'text-warm-700'}`}><Share2 size={18} /><span>分享圈</span></NavLink>
+        <NavLink to="/sales/profile" className={({ isActive }) => `flex flex-col items-center gap-1 py-1.5 rounded-xl text-[10px] ${isActive ? 'bg-primary-100 text-primary-800 font-semibold' : 'text-warm-700'}`}><User size={18} /><span>我的</span></NavLink>
       </nav>
 
       {/* 签到弹窗（登录后弹出） */}
@@ -597,6 +644,44 @@ export default function SalesLayout() {
       {/* 每日一题弹窗 */}
       {showDailyQuestion && (
         <DailyQuestionModal onClose={() => setShowDailyQuestion(false)} />
+      )}
+
+      {/* 通知弹窗（管理员调整积分、公告等），避免与签到/每日一题同时弹出 */}
+      {(notices.length > 0 || announceNotices.length > 0) && !showCheckInPopup && !showDailyQuestion && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-soft-xl w-full max-w-sm overflow-hidden">
+            <div className="px-5 pt-5 pb-3 text-center">
+              <div className="w-12 h-12 mx-auto rounded-full bg-amber-50 flex items-center justify-center mb-2">
+                <Award size={24} className="text-amber-500" />
+              </div>
+              <h3 className="text-base font-bold text-warm-900">
+                {(notices.length + announceNotices.length) > 1 ? `你有 ${notices.length + announceNotices.length} 条新提醒` : '你有一条新提醒'}
+              </h3>
+            </div>
+            <div className="px-5 max-h-72 overflow-y-auto space-y-2.5">
+              {announceNotices.map((a) => (
+                <div key={'ann_' + a.id} className="p-3 rounded-xl bg-primary-50 border border-primary-100">
+                  <p className="text-sm font-semibold text-warm-800">
+                    <span className="mr-1.5 px-1.5 py-0.5 rounded bg-primary-500 text-white text-[10px] align-middle">公告</span>
+                    {a.title}
+                  </p>
+                  <p className="text-xs text-warm-600 mt-1 leading-relaxed whitespace-pre-wrap">{a.content}</p>
+                  <p className="text-[11px] text-warm-300 mt-1.5">{String(a.published_at || '').slice(0, 16)}</p>
+                </div>
+              ))}
+              {notices.map((n) => (
+                <div key={n.id} className="p-3 rounded-xl bg-warm-50 border border-warm-100">
+                  <p className="text-sm font-semibold text-warm-800">{n.title || '通知'}</p>
+                  <p className="text-xs text-warm-500 mt-1 leading-relaxed whitespace-pre-wrap">{n.content}</p>
+                  <p className="text-[11px] text-warm-300 mt-1.5">{String(n.created_at || '').slice(0, 16)}</p>
+                </div>
+              ))}
+            </div>
+            <div className="p-5">
+              <button onClick={dismissNotices} className="btn-primary w-full">我知道了</button>
+            </div>
+          </div>
+        </div>
       )}
       {showChangePassword && (
         <ChangePasswordModal onClose={() => setShowChangePassword(false)} />

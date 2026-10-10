@@ -2,11 +2,10 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Play, FileText, File, Clock, BookOpen, ChevronRight,
   X, CheckCircle, Circle, BarChart3, Loader2, AlertCircle,
-  ExternalLink, RefreshCw, Flag, Download, MessageCircle,
+  ExternalLink, RefreshCw, Flag, Download,
 } from 'lucide-react';
 import api from '../../api';
 import PDFViewer from '../../components/PDFViewer';
-import ShareCircle from '../../components/ShareCircle';
 
 // 课程类型图标与颜色
 const TYPE_CONFIG = {
@@ -48,9 +47,10 @@ export default function Learning() {
   const [roadmapLoading, setRoadmapLoading] = useState(false);
   const [progressLoading, setProgressLoading] = useState({});
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState('courses'); // 'courses' | 'shares'
   const videoRef = useRef(null);
   const lastProgressRef = useRef(0);
+  // 禁快进：记录用户已观看到的最远时间点（秒），禁止拖到超过该点的位置
+  const maxAllowedTimeRef = useRef(0);
 
   // 加载课程列表 + 批量加载进度
   const loadCourses = useCallback(async () => {
@@ -115,30 +115,48 @@ export default function Learning() {
   }, []);
 
   // 更新进度到后端
-  const updateProgress = useCallback(async (courseId, percent) => {
+  const updateProgress = useCallback(async (courseId, percent, watchTime) => {
     try {
-      await api.post(`/courses/${courseId}/progress`, { progress: percent });
+      const payload = { progress: percent };
+      if (watchTime !== undefined) payload.watch_time = Math.floor(watchTime);
+      await api.post(`/courses/${courseId}/progress`, payload);
       setCourseProgress((prev) => ({ ...prev, [courseId]: { ...prev[courseId], progress: percent, completed: percent >= 100 } }));
     } catch (err) {
       console.error('更新进度失败:', err);
     }
   }, []);
 
-  // 视频播放进度跟踪
+  // 视频播放进度跟踪 + 禁快进（累加最远观看时间）
   const handleVideoTimeUpdate = (courseId) => {
     const video = videoRef.current;
     if (!video || !video.duration) return;
+    // 累加已观看到的最远时间点
+    if (video.currentTime > maxAllowedTimeRef.current) {
+      maxAllowedTimeRef.current = video.currentTime;
+    }
     const percent = Math.min(100, Math.round((video.currentTime / video.duration) * 100));
     // 每进度变化 5% 以上才更新，避免频繁请求
     if (percent - lastProgressRef.current >= 5) {
       lastProgressRef.current = percent;
-      updateProgress(courseId, percent);
+      updateProgress(courseId, percent, video.currentTime);
+    }
+  };
+
+  // 禁快进：阻止用户拖动进度条到未观看的部分
+  const handleVideoSeeking = () => {
+    const video = videoRef.current;
+    if (!video || !video.duration) return;
+    const maxAllowed = maxAllowedTimeRef.current;
+    // 允许 1 秒容差，避免抖动
+    if (video.currentTime > maxAllowed + 1) {
+      video.currentTime = maxAllowed;
     }
   };
 
   const handleVideoEnded = (courseId) => {
     lastProgressRef.current = 100;
-    updateProgress(courseId, 100);
+    const video = videoRef.current;
+    updateProgress(courseId, 100, video?.duration || 0);
     loadRoadmap();
   };
 
@@ -161,9 +179,16 @@ export default function Learning() {
     loadRoadmap();
   }, [loadCourses, loadRoadmap]);
 
-  // 打开课程详情时加载进度
+  // 打开课程详情时加载进度 + 初始化禁快进的最远时间
   useEffect(() => {
     if (selectedCourse && showDetail) {
+      const prog = courseProgress[selectedCourse.id];
+      // 从已保存的进度恢复最远观看时间（允许从头开始看，但禁止跳过未看部分）
+      if (prog && typeof prog.watch_time === 'number' && prog.watch_time > 0) {
+        maxAllowedTimeRef.current = prog.watch_time;
+      } else {
+        maxAllowedTimeRef.current = 0;
+      }
       lastProgressRef.current = 0;
       loadCourseProgress(selectedCourse.id);
     }
@@ -196,40 +221,7 @@ export default function Learning() {
     <div className="flex flex-col flex-1 min-h-0 gap-4 md:gap-6 md:flex-row">
       {/* ===== 左侧：课程主区域 ===== */}
       <div className="flex-1 min-w-0 min-h-0 flex flex-col">
-        {/* 顶部 Tab 切换 */}
-        <div className="flex items-center gap-6 mb-6 shrink-0">
-          <h2 className="page-title">销冠闯关秘籍</h2>
-          <div className="flex gap-1 bg-warm-100/60 rounded-xl p-1">
-            <button
-              onClick={() => setActiveTab('courses')}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${
-                activeTab === 'courses'
-                  ? 'bg-white text-primary-700 shadow-sm'
-                  : 'text-warm-500 hover:text-warm-700'
-              }`}
-            >
-              课程
-            </button>
-            <button
-              onClick={() => setActiveTab('shares')}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition flex items-center gap-1.5 ${
-                activeTab === 'shares'
-                  ? 'bg-white text-primary-700 shadow-sm'
-                  : 'text-warm-500 hover:text-warm-700'
-              }`}
-            >
-              <MessageCircle size={16} />
-              分享圈
-            </button>
-          </div>
-        </div>
-
-        {/* 分享圈内容 */}
-        {activeTab === 'shares' && <ShareCircle />}
-
-        {/* 课程内容 */}
-        {activeTab === 'courses' && (
-        <>
+        <h2 className="page-title mb-6 shrink-0">销冠闯关秘籍</h2>
 
         {/* 滚动容器 */}
         <div className="flex-1 min-h-0 overflow-y-auto">
@@ -432,12 +424,9 @@ export default function Learning() {
           </div>
         )}
         </div>
-      </>
-      )}
       </div>
 
       {/* ===== 右侧：通关路线图 ===== */}
-      {activeTab === 'courses' && (
       <aside className="w-64 shrink-0 hidden xl:block">
         <div className="card sticky top-6">
           <div className="flex items-center gap-2 mb-4">
@@ -499,10 +488,9 @@ export default function Learning() {
           )}
         </div>
       </aside>
-      )}
 
       {/* ===== 课程详情弹窗 ===== */}
-      {activeTab === 'courses' && showDetail && selectedCourse && (
+      {showDetail && selectedCourse && (
         <div className="fixed inset-0 z-50 flex items-stretch md:items-center justify-center bg-black/50 p-0 md:p-4">
           <div className="bg-white md:rounded-2xl shadow-2xl w-full h-screen md:h-auto md:max-h-[90vh] flex flex-col overflow-hidden md:mx-4 md:max-w-3xl"
             style={{ height: '100dvh' }}>
@@ -558,6 +546,8 @@ export default function Learning() {
                         preload="metadata"
                         onContextMenu={(e) => e.preventDefault()}
                         onTimeUpdate={() => handleVideoTimeUpdate(selectedCourse.id)}
+                        onSeeking={handleVideoSeeking}
+                        onSeeked={handleVideoSeeking}
                         onEnded={() => handleVideoEnded(selectedCourse.id)}
                         crossOrigin="anonymous"
                         poster={selectedCourse.cover_url ? `/api/course-media/${selectedCourse.id}?type=cover&token=${encodeURIComponent(localStorage.getItem('token') || '')}` : undefined}

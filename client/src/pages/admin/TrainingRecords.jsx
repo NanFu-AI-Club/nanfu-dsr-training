@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Loader2, AlertCircle, ChevronLeft, MessageSquare, FileText, Bot, User, Download, Filter, X } from 'lucide-react';
 import api from '../../api';
+import { formatShanghai, todayShanghai } from '../../utils/time';
 
 export default function TrainingRecords() {
   const [sessions, setSessions] = useState([]);
@@ -8,41 +9,67 @@ export default function TrainingRecords() {
   const [error, setError] = useState('');
   const [detail, setDetail] = useState(null);
   const [filters, setFilters] = useState({ status: '', user_id: '', scenario_id: '', date_from: '', date_to: '' });
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [scenarios, setScenarios] = useState([]);
   const [users, setUsers] = useState([]);
+  const [userKeyword, setUserKeyword] = useState('');
   const [showFilters, setShowFilters] = useState(false);
 
   const loadSessions = useCallback(async () => {
     try {
       setLoading(true);
       const params = new URLSearchParams();
+      params.append('page', page);
+      params.append('pageSize', pageSize);
       if (filters.status) params.append('status', filters.status);
       if (filters.user_id) params.append('user_id', filters.user_id);
       if (filters.scenario_id) params.append('scenario_id', filters.scenario_id);
       if (filters.date_from) params.append('date_from', filters.date_from);
       if (filters.date_to) params.append('date_to', filters.date_to);
       const res = await api.get(`/training/admin/sessions?${params.toString()}`);
-      const data = res.data || res || [];
+      const data = res.data || res || {};
       setSessions(Array.isArray(data) ? data : (data.list || []));
+      setTotal(data.total || 0);
+      setTotalPages(data.totalPages || Math.max(1, Math.ceil((data.total || 0) / pageSize)));
     } catch (err) {
       setError(err?.message || '加载失败');
     } finally {
       setLoading(false);
     }
-  }, [filters]);
+  }, [filters, page, pageSize]);
 
   // 加载筛选选项
   useEffect(() => {
+    const today = new Date();
+    const from = new Date(today);
+    from.setDate(today.getDate() - 29);
+    const toDate = (date) => {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    };
+    setFilters((prev) => ({ ...prev, date_from: toDate(from), date_to: toDate(today) }));
+
     api.get('/training/scenarios?status=all&pageSize=100').then(res => {
       const data = res.data?.data || res.data || res || [];
       setScenarios(Array.isArray(data?.list) ? data.list : (Array.isArray(data) ? data : []));
     }).catch(() => {});
-    api.get('/admin/users?pageSize=500').then(res => {
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams({ page: '1', limit: '30', role: 'sales' });
+    if (userKeyword.trim()) params.set('keyword', userKeyword.trim());
+    api.get(`/users?${params.toString()}`).then(res => {
       const data = res.data?.data || res.data || res || [];
       setUsers(Array.isArray(data?.list) ? data.list : (Array.isArray(data) ? data : []));
     }).catch(() => {});
-  }, []);
+  }, [userKeyword]);
 
+  useEffect(() => { setPage(1); }, [filters]);
   useEffect(() => { loadSessions(); }, [loadSessions]);
 
   const viewDetail = async (sessionId) => {
@@ -84,9 +111,9 @@ export default function TrainingRecords() {
         <div className="card">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="font-bold text-warm-900">{session.scenario_title || '陪练记录'}</h3>
+              <h3 className="font-bold text-warm-900">{session.scenario_title || 'FU利陪陪记录'}</h3>
               <p className="text-xs text-warm-400 mt-1">
-                {session.real_name || session.username || '-'} · {session.role_type || ''} · {session.started_at ? new Date(session.started_at).toLocaleString('zh-CN') : ''}
+                {session.real_name || session.username || '-'} · {session.role_type || ''} · {session.started_at ? formatShanghai(session.started_at) : ''}
               </p>
             </div>
             {report && report.total_score != null && (
@@ -195,7 +222,7 @@ export default function TrainingRecords() {
       s.real_name || s.username || '-',
       s.scenario_title || '-',
       s.role_type || '-',
-      s.started_at ? new Date(s.started_at).toLocaleString('zh-CN') : '-',
+      s.started_at ? formatShanghai(s.started_at) : '-',
       s.status === 'completed' ? '已结束' : '进行中',
       s.report_score != null ? s.report_score.toFixed(1) : '-',
       s.earned_points != null ? s.earned_points : '-'
@@ -205,7 +232,7 @@ export default function TrainingRecords() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `陪练记录_${new Date().toISOString().slice(0,10)}.csv`;
+    a.download = `FU利陪陪记录_${todayShanghai()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -213,7 +240,7 @@ export default function TrainingRecords() {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold text-warm-900">陪练记录</h2>
+        <h2 className="text-xl font-bold text-warm-900">FU利陪陪记录</h2>
         <div className="flex items-center gap-2">
           <button onClick={() => setShowFilters(!showFilters)} className={`btn-secondary flex items-center gap-1.5 ${showFilters ? 'bg-primary-50 text-primary-600' : ''}`}>
             <Filter size={16} /> 筛选
@@ -237,12 +264,18 @@ export default function TrainingRecords() {
               </select>
             </div>
             <div>
-              <label className="text-xs text-warm-500 mb-1 block">业务员</label>
-              <select value={filters.user_id} onChange={e => setFilters(f => ({ ...f, user_id: e.target.value }))} className="input-field text-sm">
-                <option value="">全部</option>
-                {users.map(u => <option key={u.id} value={u.id}>{u.real_name || u.username}</option>)}
-              </select>
-            </div>
+                <label className="text-xs text-warm-500 mb-1 block">业务员</label>
+                <input
+                  value={userKeyword}
+                  onChange={e => setUserKeyword(e.target.value)}
+                  placeholder="搜索姓名/账号"
+                  className="input-field text-sm mb-1"
+                />
+                <select value={filters.user_id} onChange={e => setFilters(f => ({ ...f, user_id: e.target.value }))} className="input-field text-sm">
+                  <option value="">全部</option>
+                  {users.map(u => <option key={u.id} value={u.id}>{u.real_name || u.username}</option>)}
+                </select>
+              </div>
             <div>
               <label className="text-xs text-warm-500 mb-1 block">情景</label>
               <select value={filters.scenario_id} onChange={e => setFilters(f => ({ ...f, scenario_id: e.target.value }))} className="input-field text-sm">
@@ -272,7 +305,7 @@ export default function TrainingRecords() {
       {loading ? (
         <div className="flex justify-center py-12"><Loader2 className="animate-spin text-primary-500" size={24} /></div>
       ) : sessions.length === 0 ? (
-        <div className="card text-center py-12 text-warm-400">暂无陪练记录</div>
+        <div className="card text-center py-12 text-warm-400">暂无FU利陪陪记录</div>
       ) : (
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
@@ -294,7 +327,7 @@ export default function TrainingRecords() {
                   <td className="py-3 px-3 font-medium">{s.real_name || s.username || '-'}</td>
                   <td className="py-3 px-3">{s.scenario_title || '-'}</td>
                   <td className="py-3 px-3 text-warm-500">{s.role_type || '-'}</td>
-                  <td className="py-3 px-3 text-xs text-warm-400">{s.started_at ? new Date(s.started_at).toLocaleString('zh-CN') : '-'}</td>
+                  <td className="py-3 px-3 text-xs text-warm-400">{s.started_at ? formatShanghai(s.started_at) : '-'}</td>
                   <td className="py-3 px-3">
                     <span className={`badge ${s.status === 'completed' ? 'badge-green' : 'badge-amber'}`}>
                       {s.status === 'completed' ? '已结束' : '进行中'}
@@ -311,6 +344,26 @@ export default function TrainingRecords() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-3 mt-4">
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1 || loading}
+            className="btn-secondary text-sm disabled:opacity-40"
+          >
+            上一页
+          </button>
+          <span className="text-sm text-warm-500">第 {page} / {totalPages} 页，共 {total} 条</span>
+          <button
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page >= totalPages || loading}
+            className="btn-secondary text-sm disabled:opacity-40"
+          >
+            下一页
+          </button>
         </div>
       )}
     </div>

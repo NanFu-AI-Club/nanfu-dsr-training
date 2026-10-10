@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Loader2, AlertCircle, Plus, Edit2, Trash2, Package, Award, ShoppingBag, X, Upload } from 'lucide-react';
+import { Loader2, AlertCircle, Plus, Edit2, Trash2, Package, Award, ShoppingBag, X, Upload, Download } from 'lucide-react';
 import api from '../../api';
+import { formatShanghai, todayShanghai } from '../../utils/time';
 
 export default function AdminShop() {
   const [tab, setTab] = useState('products');
@@ -39,6 +40,22 @@ export default function AdminShop() {
 
   const handleTrackingUpdate = async (id, trackingNo) => {
     try { await api.put('/shop/orders/' + id + '/tracking', { tracking_no: trackingNo }); loadOrders(); } catch (err) { alert('快递单号更新失败'); }
+  };
+
+  const handleExportOrders = async () => {
+    try {
+      const res = await api.get('/shop/orders/export', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data || res]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `兑换订单_${todayShanghai()}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('导出失败: ' + (err?.message || '未知错误'));
+    }
   };
 
   const STATUS_MAP = { pending: '待处理', shipped: '已发货', completed: '已完成', cancelled: '已取消' };
@@ -96,8 +113,14 @@ export default function AdminShop() {
       )}
 
       {tab === 'orders' && (
-        loading ? (<div className="flex justify-center py-10"><Loader2 size={28} className="animate-spin text-primary-600" /></div>) :
-        orders.length === 0 ? (<p className="text-center text-warm-400 py-10">暂无兑换订单</p>) : (
+        <>
+          <div className="flex justify-end">
+            <button onClick={handleExportOrders} className="btn-secondary flex items-center gap-2 text-sm">
+              <Download size={16} />导出订单
+            </button>
+          </div>
+          {loading ? (<div className="flex justify-center py-10"><Loader2 size={28} className="animate-spin text-primary-600" /></div>) :
+          orders.length === 0 ? (<p className="text-center text-warm-400 py-10">暂无兑换订单</p>) : (
           <div className="card overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="border-b text-warm-500">
@@ -127,7 +150,7 @@ export default function AdminShop() {
                         />
                       </div>
                     </td>
-                    <td className="py-3 px-3 text-xs text-warm-400">{new Date(o.created_at).toLocaleString('zh-CN')}</td>
+                    <td className="py-3 px-3 text-xs text-warm-400">{formatShanghai(o.created_at)}</td>
                     <td className="py-3 px-3"><span className={`badge ${o.status === 'completed' ? 'badge-green' : o.status === 'pending' ? 'badge-amber' : o.status === 'shipped' ? 'badge-blue' : 'badge-gray'}`}>{STATUS_MAP[o.status]}</span></td>
                     <td className="py-3 px-3">
                       {o.status === 'pending' && (<div className="flex gap-1">
@@ -141,7 +164,8 @@ export default function AdminShop() {
               </tbody>
             </table>
           </div>
-        )
+          )}
+        </>
       )}
 
       {showForm && <ProductForm product={editProduct} onClose={() => setShowForm(false)} onSaved={() => { setShowForm(false); loadProducts(); }} />}

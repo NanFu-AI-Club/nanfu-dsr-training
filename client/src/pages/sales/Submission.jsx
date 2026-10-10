@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { Upload, Image, Video, Trash2, Loader2, CheckCircle, Clock, XCircle, Eye, Plus, AlertCircle, Link, ExternalLink, Briefcase, TrendingUp, ShieldAlert, Users, MoreHorizontal, MonitorSmartphone } from 'lucide-react';
+import { Upload, Image, Video, Trash2, Loader2, CheckCircle, Clock, XCircle, Eye, Plus, AlertCircle, Link, ExternalLink, Briefcase, TrendingUp, ShieldAlert, Users, MoreHorizontal, MonitorSmartphone, Award } from 'lucide-react';
 import api from '../../api';
+import { formatShanghai } from '../../utils/time';
 
 const CATEGORIES = [
   { key: 'sales_negotiation', label: '进货谈单实战', desc: '谈卖进、应对老板拒绝的实战经验', icon: Briefcase, color: 'from-amber-50 to-orange-50 border-amber-200 hover:border-amber-300', activeColor: 'border-amber-500 bg-amber-50', iconBg: 'bg-amber-100 text-amber-700', badge: 'bg-amber-100 text-amber-700' },
@@ -134,7 +135,7 @@ export default function Submission() {
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-xl font-bold text-warm-900">风采投稿</h2>
-          <p className="text-sm text-warm-500 mt-1">选择板块浏览投稿，或发布你的实战经验（通过审核可获积分奖励）</p>
+          <p className="text-sm text-warm-500 mt-1">发布你的实战视频，通过审核可获积分奖励；文字或图片经验请到「分享圈」分享</p>
         </div>
         <button
           onClick={handleOpenForm}
@@ -249,7 +250,7 @@ export default function Submission() {
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-warm-600 mb-1">选择文件（图片/视频）</label>
+              <label className="block text-sm font-medium text-warm-600 mb-1">上传视频 <span className="text-warm-400 font-normal">（仅视频投稿）</span></label>
               <input type="file" ref={fileRef} onChange={handleFileChange}
                 accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime"
                 className="hidden" />
@@ -358,13 +359,18 @@ export default function Submission() {
                         </a>
                       )}
                       <p className="text-xs text-warm-400 mt-2">
-                        {item.created_at ? new Date(item.created_at).toLocaleString('zh-CN') : ''}
+                        {item.created_at ? formatShanghai(item.created_at) : ''}
                       </p>
                     </div>
                     <span className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium shrink-0 ${status.className}`}>
                       <StatusIcon className="w-3 h-3" />{status.label}
                     </span>
                   </div>
+                  {item.status === 'approved' && Number(item.awarded_points) > 0 && (
+                    <p className="text-xs text-amber-600 mt-2 bg-amber-50 px-2 py-1 rounded inline-flex items-center gap-1">
+                      <Award className="w-3 h-3" />审核通过，已获得 +{item.awarded_points} 积分
+                    </p>
+                  )}
                   {item.status === 'rejected' && item.review_comment && (
                     <p className="text-xs text-rose-500 mt-2 bg-rose-50 px-2 py-1 rounded">驳回原因：{item.review_comment}</p>
                   )}
@@ -394,14 +400,14 @@ export default function Submission() {
       {/* 预览弹窗 */}
       {previewItem && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => setPreviewItem(null)}>
-          <div className="max-w-3xl w-full max-h-[90vh] bg-white rounded-xl overflow-hidden" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-4 border-b border-warm-100">
+          <div className="max-w-3xl w-full max-h-[90vh] bg-white rounded-xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-warm-100 shrink-0">
               <h3 className="font-semibold text-warm-900">{previewItem.title}</h3>
               <button onClick={() => setPreviewItem(null)}
                 className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-warm-100 text-warm-500"
               >✕</button>
             </div>
-            <div className="overflow-auto max-h-[70vh]">
+            <div className="overflow-y-auto flex-1 min-h-0">
               {previewItem.type === 'link' ? (
                 <div className="flex flex-col items-center justify-center py-16 px-4 bg-gradient-to-br from-blue-50 to-indigo-50">
                   <Link className="w-16 h-16 text-blue-400 mb-4" />
@@ -418,10 +424,10 @@ export default function Submission() {
               ) : (
                 <img src={previewItem.file_url} alt={previewItem.title} className="w-full" />
               )}
+              {previewItem.description && (
+                <p className="p-4 text-sm text-warm-600 border-t border-warm-100 whitespace-pre-wrap">{previewItem.description}</p>
+              )}
             </div>
-            {previewItem.description && (
-              <p className="p-4 text-sm text-warm-600 border-t border-warm-100">{previewItem.description}</p>
-            )}
           </div>
         </div>
       )}

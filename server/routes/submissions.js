@@ -1,12 +1,64 @@
 const express = require('express');
+const { nowShanghaiString } = require('../utils/time');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
-const { authRequired, adminRequired } = require('../middleware/auth');
+const { authRequired, adminRequired, getOrgUserScope } = require('../middleware/auth');
+const { applyLevelBonus } = require('../utils/points');
 const { uploadToCOS, deleteFromCOS } = require('../services/cos');
 
 const router = express.Router();
+
+function logActivity(db, userId, action, targetType, targetId, detail, ip) {
+  db.prepare(`
+    INSERT INTO activity_logs (id, user_id, action, module, target_type, target_id, detail, ip)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(uuidv4(), userId, action, 'submissions', targetType, targetId, detail ? JSON.stringify(detail) : null, ip || null);
+}
+
+// 给指定用户写入一条站内通知（用户在登录后会看到弹窗）
+function notifyUser(db, userId, type, title, content) {
+  if (!userId) return;
+  try {
+    db.prepare(`
+      INSERT INTO user_notifications (id, user_id, type, title, content, is_read, created_at)
+      VALUES (?, ?, ?, ?, ?, 0, datetime('now','localtime'))
+    `).run(uuidv4(), userId, type, title, content);
+  } catch (e) {
+    console.error('[submissions] 通知写入失败:', e.message);
+  }
+}
+
+// 该投稿当前净发放的积分（发放 + 扣回）
+function getNetAwardedPoints(db, submissionId, userId) {
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(points), 0) AS net FROM point_logs
+    WHERE source_id = ? AND user_id = ? AND source_type IN ('submission', 'submission_revoked')
+  `).get(submissionId, userId);
+  return Number(row?.net) || 0;
+}
+
+// 把已通过的投稿改为驳回时，扣回此前发放的奖励积分
+function revokeSubmissionPoints(db, sub) {
+  const net = getNetAwardedPoints(db, sub.id, sub.user_id);
+  if (net <= 0) return 0;
+  const user = db.prepare('SELECT points FROM users WHERE id = ?').get(sub.user_id);
+  if (!user) return 0;
+  const balanceDeduction = Math.min(Math.max(Number(user.points) || 0, 0), net);
+  db.prepare(`
+    UPDATE users
+    SET points = MAX(0, points - ?),
+        total_earned_points = MAX(0, total_earned_points - ?),
+        updated_at = datetime('now','localtime')
+    WHERE id = ?
+  `).run(balanceDeduction, net, sub.user_id);
+  db.prepare(`
+    INSERT INTO point_logs (id, user_id, points, reason, source_type, source_id, created_at)
+    VALUES (?, ?, ?, ?, 'submission_revoked', ?, datetime('now','localtime'))
+  `).run(uuidv4(), sub.user_id, -net, '投稿审核改为驳回，扣回奖励积分', sub.id);
+  return balanceDeduction;
+}
 
 // 本地存储仍保留作为 COS 失败时的回退
 const uploadDir = path.join(__dirname, '..', 'uploads', 'submissions');
@@ -47,7 +99,7 @@ router.post('/', authRequired, (req, res) => {
       return res.status(400).json({ code: 1, message: '请上传文件或填写网盘链接' });
     }
 
-    const now = new Date().toISOString();
+    const now = nowShanghaiString();
     const id = uuidv4();
 
     let fileUrl = '';
@@ -83,6 +135,8 @@ router.post('/', authRequired, (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
     ).run(id, req.user.id, title.trim(), description || null, type, fileUrl, cat, cleanLinkUrl, cosKey, now, now);
 
+    logActivity(db, req.user.id, 'create', 'submission', id, { title: title.trim(), category: cat, type }, req.ip);
+
     res.json({ code: 0, message: '投稿成功，等待审核', data: { id } });
   });
 });
@@ -100,10 +154,12 @@ router.get('/my', authRequired, (req, res) => {
   if (category) { where += ' AND s.category = ?'; params.push(category); }
 
   const rows = db.prepare(
-    `SELECT s.*, u.real_name, u.username
-     FROM submissions s LEFT JOIN users u ON s.reviewed_by = u.id
-     WHERE ${where}
-     ORDER BY s.created_at DESC LIMIT ? OFFSET ?`
+    `SELECT s.*, u.real_name, u.username,
+            (SELECT COALESCE(SUM(pl.points), 0) FROM point_logs pl
+             WHERE pl.source_id = s.id AND pl.source_type IN ('submission', 'submission_revoked')) AS awarded_points
+      FROM submissions s LEFT JOIN users u ON s.reviewed_by = u.id
+      WHERE ${where}
+      ORDER BY s.created_at DESC LIMIT ? OFFSET ?`
   ).all(...params, limit, offset);
 
   const total = db.prepare(
@@ -132,9 +188,11 @@ router.get('/', authRequired, adminRequired, (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 20, 100);
   const offset = (page - 1) * limit;
   const { status, user_id, type, category } = req.query;
+  const actor = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const scope = getOrgUserScope(db, actor, 'u');
 
-  let where = '1=1';
-  const params = [];
+  let where = scope.clause;
+  const params = [...scope.params];
   if (status) { where += ' AND s.status = ?'; params.push(status); }
   if (user_id) { where += ' AND s.user_id = ?'; params.push(user_id); }
   if (type) { where += ' AND s.type = ?'; params.push(type); }
@@ -150,13 +208,12 @@ router.get('/', authRequired, adminRequired, (req, res) => {
   ).all(...params, limit, offset);
 
   const total = db.prepare(
-    `SELECT COUNT(*) as total FROM submissions s WHERE ${where}`
+    `SELECT COUNT(*) as total FROM submissions s JOIN users u ON s.user_id = u.id WHERE ${where}`
   ).get(...params).total;
 
-  // 各分类统计（全部投稿，不分用户）
   const catCounts = db.prepare(
-    `SELECT category, COUNT(*) as count FROM submissions GROUP BY category`
-  ).all();
+    `SELECT s.category, COUNT(*) as count FROM submissions s JOIN users u ON s.user_id = u.id WHERE ${scope.clause} GROUP BY s.category`
+  ).all(...scope.params);
   const stats = {};
   let allTotal = 0;
   catCounts.forEach(c => { stats[c.category] = c.count; allTotal += c.count; });
@@ -172,30 +229,63 @@ router.put('/:id/status', authRequired, adminRequired, (req, res) => {
   const db = req.db;
   const { status, review_comment } = req.body;
 
+  // 区域经理（area_manager）仅可查看，无审核权限
+  if (req.user.manager_type === 'area_manager') {
+    return res.status(403).json({ code: 403, message: '区域经理无投稿审核权限' });
+  }
+
   if (!['approved', 'rejected'].includes(status)) {
     return res.status(400).json({ code: 1, message: '状态值无效' });
   }
 
-  const sub = db.prepare('SELECT * FROM submissions WHERE id = ?').get(req.params.id);
+  const actor = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const scope = getOrgUserScope(db, actor, 'u');
+  const sub = db.prepare(`SELECT s.* FROM submissions s JOIN users u ON s.user_id = u.id WHERE s.id = ? AND ${scope.clause}`).get(req.params.id, ...scope.params);
   if (!sub) {
     return res.status(404).json({ code: 1, message: '投稿不存在' });
   }
 
-  const now = new Date().toISOString();
+  if (sub.status === status) {
+    return res.json({ code: 0, message: status === 'approved' ? '该投稿已经审核通过' : '该投稿已经审核驳回' });
+  }
+  const now = nowShanghaiString();
   db.prepare(
     'UPDATE submissions SET status = ?, review_comment = ?, reviewed_by = ?, reviewed_at = ?, updated_at = ? WHERE id = ?'
   ).run(status, review_comment || null, req.user.id, now, now, req.params.id);
 
-  // 审核通过给积分奖励（从积分规则读取配置）
+  // 审核通过给积分奖励（从积分规则读取配置），按净发放判断，避免重复发放
+  let awardedPoints = 0;
+  let revokedPoints = 0;
   if (status === 'approved') {
-    const rule = db.prepare("SELECT points FROM point_rules WHERE source_type = 'submission_approved' AND enabled = 1").get();
-    const points = rule ? rule.points : 5;
-    const pointsId = uuidv4();
-    db.prepare(
-      `INSERT INTO point_logs (id, user_id, points, reason, source_type, source_id, created_at)
-       VALUES (?, ?, ?, ?, 'submission', ?, ?)`
-    ).run(pointsId, sub.user_id, points, '风采投稿审核通过', sub.id, now);
-    db.prepare('UPDATE users SET points = points + ?, total_earned_points = total_earned_points + ? WHERE id = ?').run(points, points, sub.user_id);
+    if (getNetAwardedPoints(db, sub.id, sub.user_id) <= 0) {
+      const rule = db.prepare("SELECT points FROM point_rules WHERE source_type = 'submission_approved' AND enabled = 1").get();
+      const basePoints = rule ? rule.points : 5;
+      const { awarded: points } = applyLevelBonus(db, sub.user_id, basePoints);
+      awardedPoints = points;
+      const pointsId = uuidv4();
+      db.prepare(
+        `INSERT INTO point_logs (id, user_id, points, reason, source_type, source_id, created_at)
+         VALUES (?, ?, ?, ?, 'submission', ?, ?)`
+      ).run(pointsId, sub.user_id, points, '风采投稿审核通过', sub.id, now);
+      db.prepare('UPDATE users SET points = points + ?, total_earned_points = total_earned_points + ? WHERE id = ?').run(points, points, sub.user_id);
+    }
+  } else if (sub.status === 'approved') {
+    // 已通过改为驳回：扣回此前发放的奖励积分
+    revokedPoints = revokeSubmissionPoints(db, sub);
+  }
+
+  const logDetail = { title: sub.title, submitter_id: sub.user_id };
+  if (status === 'approved') logDetail.points = awardedPoints;
+  else if (revokedPoints > 0) logDetail.revoked_points = revokedPoints;
+
+  logActivity(db, req.user.id, status === 'approved' ? 'approve' : 'reject', 'submission', sub.id, logDetail, req.ip);
+
+  // 驳回时通知投稿人
+  if (status === 'rejected') {
+    const parts = [`你的投稿《${sub.title || '未命名'}》未通过审核`];
+    if (review_comment) parts.push(`审核意见：${review_comment}`);
+    if (revokedPoints > 0) parts.push(`此前发放的 ${revokedPoints} 积分已扣回`);
+    notifyUser(db, sub.user_id, 'submission_rejected', '风采投稿未通过', parts.join('。') + '。');
   }
 
   res.json({ code: 0, message: status === 'approved' ? '已通过' : '已驳回' });
@@ -223,6 +313,11 @@ router.delete('/:id', authRequired, async (req, res) => {
   }
 
   db.prepare('DELETE FROM submissions WHERE id = ?').run(req.params.id);
+  logActivity(db, req.user.id, 'delete', 'submission', sub.id, {
+    title: sub.title,
+    by: req.user.role === 'admin' ? 'admin' : 'self',
+    submitter_id: sub.user_id,
+  }, req.ip);
   res.json({ code: 0, message: '已删除' });
 });
 

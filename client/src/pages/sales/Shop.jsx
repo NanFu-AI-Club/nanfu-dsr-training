@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Loader2, AlertCircle, Award, ShoppingBag, Package, Clock, CheckCircle, XCircle } from 'lucide-react';
 import api from '../../api';
+import { formatShanghai } from '../../utils/time';
 import { useAuth } from '../../contexts/AuthContext';
 
 export default function Shop() {
@@ -188,7 +189,7 @@ export default function Shop() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-warm-900 text-sm">{order.product_name}</p>
-                    <p className="text-xs text-warm-400">{new Date(order.created_at).toLocaleString('zh-CN')}</p>
+                    <p className="text-xs text-warm-400">{formatShanghai(order.created_at)}</p>
                     {order.recipient_name && <p className="text-xs text-warm-500 mt-1">收件人: {order.recipient_name} {order.recipient_phone}</p>}
                     {order.tracking_no && <p className="text-xs text-sky-600 mt-1">快递单号: {order.tracking_no}</p>}
                   </div>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { CalendarDays, Flame, Award, Gift, Check, ChevronLeft, ChevronRight, Star, BookOpen, FileText, MessageSquare, Loader2, Sparkles, Crown } from 'lucide-react';
 import api from '../../api';
+import { todayShanghai } from '../../utils/time';
 
 const ICON_MAP = {
   calendar: CalendarDays,
@@ -248,7 +249,7 @@ export default function CheckIn() {
             for (let d = 1; d <= daysInMonth; d++) {
               const dateStr = currMonth + '-' + String(d).padStart(2, '0');
               const dayData = calendar?.calendar?.find(c => c.date === dateStr);
-              const isToday = dateStr === new Date().toISOString().split('T')[0];
+              const isToday = dateStr === todayShanghai();
               const isChecked = dayData?.checked_in;
 
               cells.push(

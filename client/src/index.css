@@ -41,11 +41,11 @@
 @layer components {
   /* 卡片 — 更圆润、阴影更柔和 */
   .card {
-    @apply bg-white rounded-2xl shadow-soft border border-warm-100/60 p-5 md:p-6
+    @apply bg-white rounded-2xl shadow-soft border border-warm-100 p-5 md:p-6
            transition-all duration-300;
   }
   .card:hover {
-    @apply shadow-soft-lg;
+    @apply shadow-soft-lg border-warm-200 -translate-y-0.5;
   }
 
   /* 主按钮 — 天空蓝渐变 */
@@ -98,7 +98,7 @@
 
   /* 表格 */
   .table-header {
-    @apply px-4 py-3 text-left text-xs font-medium text-warm-500 uppercase tracking-wider
+    @apply px-4 py-3 text-left text-xs font-semibold text-warm-600 uppercase tracking-wider
            bg-warm-50/80 border-b border-warm-100;
   }
   .table-cell {
@@ -164,7 +164,7 @@
 
 /* ===== 天空渐变背景 ===== */
 .sky-gradient {
-  background: linear-gradient(180deg, #f0f6fb 0%, #dcebf5 30%, #faf8f5 70%, #f5f0e8 100%);
+  background: linear-gradient(180deg, #e5f0f7 0%, #c9dfec 30%, #f6f1e9 70%, #ede3d5 100%);
 }
 
 /* ===== 卡片悬浮光泽 ===== */

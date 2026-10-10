@@ -8,12 +8,12 @@ import {
   Legend, AreaChart, Area,
 } from 'recharts';
 import api from '../../api';
+import { formatShanghai, formatDateShanghai } from '../../utils/time';
 
 /* ========== 排行维度选项 ========== */
 const RANKING_TABS = [
   { key: 'global', label: '全局排行' },
-  { key: 'group', label: '分组排行' },
-  { key: 'monthly', label: '本月排行' },
+  { key: 'month', label: '本月排行' },
 ];
 
 /* ========== 概览卡片配置 ========== */
@@ -21,7 +21,7 @@ const OVERVIEW_CARDS = [
   { key: 'total_points', label: '总积分', icon: Award, color: 'text-amber-500', bg: 'bg-amber-50' },
   { key: 'completed_courses', label: '完成课程', icon: BookOpen, color: 'text-blue-500', bg: 'bg-sky-50' },
   { key: 'exam_pass_rate', label: '考试通过率', icon: CheckCircle, color: 'text-green-500', bg: 'bg-emerald-50', isPercent: true },
-  { key: 'training_count', label: '陪练次数', icon: MessageSquare, color: 'text-purple-500', bg: 'bg-purple-50' },
+  { key: 'training_count', label: 'FU利陪陪次数', icon: MessageSquare, color: 'text-purple-500', bg: 'bg-purple-50' },
   { key: 'avg_score', label: '平均分', icon: Star, color: 'text-orange-500', bg: 'bg-orange-50' },
   { key: 'rank', label: '排名', icon: Trophy, color: 'text-pink-500', bg: 'bg-pink-50', prefix: '#' },
 ];
@@ -52,7 +52,7 @@ function generateCalendarDays(calendarData) {
   const days = [];
   const cursor = new Date(threeMonthsAgo);
   while (cursor <= today) {
-    const dateStr = cursor.toISOString().slice(0, 10);
+    const dateStr = formatDateShanghai(cursor);
     const count = dataMap[dateStr] || 0;
     let level = 0;
     if (count > 0 && count <= 2) level = 1;
@@ -449,8 +449,9 @@ export default function Statistics() {
                 <tr className="border-b">
                   <th className="table-header">排名</th>
                   <th className="table-header">姓名</th>
-                  <th className="table-header">部门/分组</th>
-                  <th className="table-header text-right">积分</th>
+                  <th className="table-header">所属区域</th>
+                  <th className="table-header">等级</th>
+                  <th className="table-header text-right">累计积分</th>
                   <th className="table-header text-right">平均分</th>
                 </tr>
               </thead>
@@ -458,6 +459,16 @@ export default function Statistics() {
                 {ranking.slice(0, 20).map((item, idx) => {
                   const isMe = currentUserId && (item.user_id === currentUserId || item.id === currentUserId);
                   const rank = item.rank || idx + 1;
+                  const levelColors = [
+                    'bg-gray-100 text-gray-600',
+                    'bg-blue-100 text-blue-700',
+                    'bg-cyan-100 text-cyan-700',
+                    'bg-violet-100 text-violet-700',
+                    'bg-amber-100 text-amber-700',
+                    'bg-rose-100 text-rose-700',
+                  ];
+                  const lv = item.level || 1;
+                  const titleText = item.title || '江湖跑侠';
                   return (
                     <tr
                       key={item.user_id || idx}
@@ -485,7 +496,13 @@ export default function Statistics() {
                         )}
                       </td>
                       <td className="table-cell text-warm-500">
-                        {item.department || item.group_name || '-'}
+                        {item.region_name || '-'}
+                      </td>
+                      <td className="table-cell">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium ${levelColors[Math.min(lv, levelColors.length - 1)]}`}>
+                          <span className="font-bold">L{lv}</span>
+                          <span>{titleText}</span>
+                        </span>
                       </td>
                       <td className="table-cell text-right font-semibold text-warm-900">
                         {item.points ?? '-'}
@@ -582,7 +599,7 @@ export default function Statistics() {
                         <span className="badge text-xs bg-warm-100 text-warm-500">{log.source_label}</span>
                         {log.created_at && (
                           <span className="text-xs text-warm-400">
-                            {new Date(log.created_at).toLocaleString('zh-CN')}
+                            {formatShanghai(log.created_at)}
                           </span>
                         )}
                       </div>

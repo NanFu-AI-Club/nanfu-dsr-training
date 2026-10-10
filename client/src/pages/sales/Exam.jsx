@@ -5,9 +5,14 @@ import {
   Timer, HelpCircle, BookOpen,
 } from 'lucide-react';
 import api from '../../api';
+import { formatShanghai, parseDate } from '../../utils/time';
 
 // 视图模式
-const VIEWS = { PENDING: 'pending', EXAM: 'exam', RECORDS: 'records' };
+const VIEWS = { PENDING: 'pending', EXAM: 'exam', RECORDS: 'records', WRONGS: 'wrongs' };
+
+// 题型中文名
+const TYPE_LABELS = { single: '单选题', multiple: '多选题', judge: '判断题', fill: '填空题', short: '简答题' };
+const typeLabelOf = (t) => TYPE_LABELS[t] || t;
 
 // 格式化秒数为 MM:SS
 function formatTime(seconds) {
@@ -19,7 +24,8 @@ function formatTime(seconds) {
 // 格式化日期
 function formatDate(dateStr) {
   if (!dateStr) return '';
-  return new Date(dateStr).toLocaleString('zh-CN', {
+  return formatShanghai(dateStr, {
+    year: undefined,
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
@@ -102,6 +108,36 @@ export default function Exam() {
       loadExamRecords();
     }
   }, [view, loadExamRecords]);
+
+  // ==================== 错题本 ====================
+  const [wrongList, setWrongList] = useState([]);
+  const [wrongLoading, setWrongLoading] = useState(false);
+
+  const loadWrongQuestions = useCallback(async () => {
+    setWrongLoading(true);
+    try {
+      const res = await api.get('/exams/my-wrong-questions');
+      const data = res?.data || res;
+      setWrongList(data?.list || []);
+    } catch (err) {
+      console.error('加载错题本失败:', err);
+    } finally {
+      setWrongLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (view === VIEWS.WRONGS) loadWrongQuestions();
+  }, [view, loadWrongQuestions]);
+
+  const removeWrongQuestion = async (questionId) => {
+    try {
+      await api.delete(`/exams/my-wrong-questions/${questionId}`);
+      setWrongList((prev) => prev.filter((item) => item.question_id !== questionId));
+    } catch (err) {
+      alert(err?.message || '移除失败');
+    }
+  };
 
   // ==================== 开始考试 ====================
   const startExam = async (exam) => {
@@ -264,12 +300,91 @@ export default function Exam() {
     loadPendingExams();
   }, [loadPendingExams]);
 
+  // ==================== 渲染：错题本 ====================
+  const renderWrongs = () => (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="page-title">我的错题本</h2>
+          <p className="text-sm text-warm-400 mt-1">共 {wrongList.length} 道错题 · 重考答对后会自动移出</p>
+        </div>
+        <button onClick={() => setView(VIEWS.PENDING)} className="btn-secondary flex items-center gap-2 text-sm">
+          <ChevronLeft size={16} />
+          返回
+        </button>
+      </div>
+
+      {wrongLoading ? (
+        <div className="card py-16 text-center text-warm-400">
+          <Loader2 size={22} className="mx-auto mb-2 animate-spin text-primary-500" />
+          正在加载错题...
+        </div>
+      ) : wrongList.length === 0 ? (
+        <div className="card py-16 text-center text-warm-400">
+          <CheckCircle size={36} className="mx-auto mb-3 text-emerald-400" />
+          <p>太棒了，暂无错题</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {wrongList.map((item, idx) => {
+            const answerArr = Array.isArray(item.answer) ? item.answer.map(String) : [String(item.answer)];
+            return (
+              <div key={item.wrong_id} className="card">
+                <div className="flex items-start gap-2 mb-3">
+                  <span className="shrink-0 w-6 h-6 rounded-full bg-rose-50 text-rose-600 text-xs font-bold flex items-center justify-center">{idx + 1}</span>
+                  <div>
+                    <span className="badge badge-blue text-xs mr-2">{typeLabelOf(item.type)}</span>
+                    <span className="text-sm text-warm-900 leading-relaxed">{item.content}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 mb-3">
+                  {(item.options || []).map((opt, oi) => {
+                    const value = typeof opt === 'object' ? opt.value : String.fromCharCode(65 + oi);
+                    const label = typeof opt === 'object' ? opt.label : opt;
+                    const isAnswer = answerArr.includes(String(value));
+                    return (
+                      <div
+                        key={oi}
+                        className={`text-sm px-3 py-2 rounded-lg ${isAnswer ? 'bg-emerald-50 text-emerald-700 font-medium' : 'bg-warm-50 text-warm-600'}`}
+                      >
+                        {value}. {label}{isAnswer && <span className="ml-1 text-xs">✓ 正确答案</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {item.analysis && (
+                  <div className="text-xs text-warm-600 bg-sky-50/60 rounded-lg px-3 py-2 leading-relaxed">
+                    <span className="font-medium text-sky-700">解析：</span>{item.analysis}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between mt-3">
+                  <span className="text-xs text-warm-400">答错 {item.wrong_count} 次 · 最近 {(item.last_wrong_at || '').slice(0, 10)}</span>
+                  <button onClick={() => removeWrongQuestion(item.question_id)} className="text-xs text-warm-400 hover:text-rose-500 transition">移出错题本</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
   // ==================== 渲染：待考列表 ====================
   const renderPendingList = () => (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h2 className="page-title">销冠答题挑战赛</h2>
         <div className="flex gap-2">
+          <button
+            onClick={() => { setView(VIEWS.WRONGS); }}
+            className="btn-secondary flex items-center gap-2 text-sm"
+          >
+            <XCircle size={16} />
+            错题本
+          </button>
           <button
             onClick={() => { setView(VIEWS.RECORDS); }}
             className="btn-secondary flex items-center gap-2 text-sm"
@@ -331,6 +446,14 @@ export default function Exam() {
                     <div className="flex items-center gap-2">
                       <HelpCircle size={14} />
                       <span>共 {exam.question_count} 题</span>
+                    </div>
+                  )}
+                  {exam.max_attempts && (
+                    <div className="flex items-center gap-2">
+                      <RotateCcw size={14} />
+                      <span>
+                        考试机会: {exam.remaining_attempts != null ? `${exam.remaining_attempts}/${exam.max_attempts}` : `${exam.max_attempts}/${exam.max_attempts}`}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -488,6 +611,8 @@ export default function Exam() {
                   {currentQuestion.type === 'single' && '单选题'}
                   {currentQuestion.type === 'multiple' && '多选题'}
                   {currentQuestion.type === 'judge' && '判断题'}
+                  {currentQuestion.type === 'fill' && '填空题'}
+                  {currentQuestion.type === 'short' && '简答题'}
                 </span>
                 <h3 className="text-lg font-medium text-warm-900 leading-relaxed">
                   <span className="text-primary-600 font-bold mr-2">
@@ -598,6 +723,35 @@ export default function Exam() {
                       />
                       错误
                     </button>
+                  </div>
+                )}
+
+                {/* 填空题 */}
+                {currentQuestion.type === 'fill' && (
+                  <div>
+                    <input
+                      type="text"
+                      className="input text-base"
+                      placeholder="请输入答案"
+                      value={answers[currentQuestion.id] ?? ''}
+                      onChange={(e) => setAnswer(currentQuestion.id, e.target.value)}
+                    />
+                    <p className="text-xs text-warm-400 mt-2">答案不区分大小写，忽略空格与标点</p>
+                  </div>
+                )}
+
+                {/* 简答题 */}
+                {currentQuestion.type === 'short' && (
+                  <div>
+                    <textarea
+                      className="input min-h-[160px] resize-y text-base leading-relaxed"
+                      placeholder="请作答，交卷后由管理员批阅"
+                      value={answers[currentQuestion.id] ?? ''}
+                      onChange={(e) => setAnswer(currentQuestion.id, e.target.value)}
+                    />
+                    <p className="text-xs text-warm-400 mt-2">
+                      简答题为主观题，交卷后需管理员人工批阅，不计入即时成绩
+                    </p>
                   </div>
                 )}
               </div>
@@ -715,21 +869,30 @@ export default function Exam() {
           {/* 成绩卡片 */}
           <div className="card mb-6">
             <Award size={48} className={`mx-auto mb-4 ${
-              examResult?.passed !== false ? 'text-green-500' : 'text-red-400'
+              examResult?.pending_manual ? 'text-amber-500'
+                : examResult?.passed !== false ? 'text-green-500' : 'text-red-400'
             }`} />
 
             <div className="text-4xl font-bold mb-2">
-              <span className={examResult?.passed !== false ? 'text-emerald-600' : 'text-rose-500'}>
+              <span className={examResult?.pending_manual ? 'text-amber-600'
+                : examResult?.passed !== false ? 'text-emerald-600' : 'text-rose-500'}>
                 {examResult?.score ?? '--'}
               </span>
               <span className="text-warm-300 text-xl"> / {examResult?.total_score ?? '--'}</span>
             </div>
 
             <span className={`badge text-sm ${
-              examResult?.passed !== false ? 'badge-green' : 'badge-red'
+              examResult?.pending_manual ? 'badge-yellow'
+                : examResult?.passed !== false ? 'badge-green' : 'badge-red'
             }`}>
-              {examResult?.passed !== false ? '已通过' : '未通过'}
+              {examResult?.pending_manual ? '待人工批阅' : examResult?.passed !== false ? '已通过' : '未通过'}
             </span>
+
+            {examResult?.pending_manual && (
+              <p className="text-sm text-amber-600 mt-3 leading-relaxed">
+                本卷含简答题，需管理员批阅后才能确定最终成绩
+              </p>
+            )}
 
             {examResult?.duration != null && (
               <p className="text-sm text-warm-400 mt-3">
@@ -804,9 +967,12 @@ export default function Exam() {
               >
                 <div className="flex items-center gap-4">
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                    record.passed !== false ? 'bg-emerald-100' : 'bg-rose-100'
+                    record.pending_manual === 1 ? 'bg-amber-100'
+                      : record.passed !== false ? 'bg-emerald-100' : 'bg-rose-100'
                   }`}>
-                    {record.passed !== false ? (
+                    {record.pending_manual === 1 ? (
+                      <Clock size={22} className="text-amber-600" />
+                    ) : record.passed !== false ? (
                       <CheckCircle size={22} className="text-emerald-600" />
                     ) : (
                       <XCircle size={22} className="text-rose-500" />
@@ -816,12 +982,20 @@ export default function Exam() {
                   <div>
                     <h4 className="font-semibold text-warm-900">
                       {record.exam_title || `考试记录 #${record.id}`}
+                      {record.attempt != null && (
+                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-md bg-primary-50 text-primary-700 text-xs font-medium">
+                          第 {record.attempt} 次
+                        </span>
+                      )}
                     </h4>
                     <div className="flex items-center gap-4 mt-1 text-sm text-warm-500">
                       <span>分数: <strong className="text-warm-700">{record.score}</strong></span>
                       <span>状态: {' '}
-                        <span className={record.passed !== false ? 'text-emerald-600' : 'text-rose-500'}>
-                          {record.passed !== false ? '通过' : '未通过'}
+                        <span className={
+                          record.pending_manual === 1 ? 'text-amber-600'
+                            : record.passed !== false ? 'text-emerald-600' : 'text-rose-500'
+                        }>
+                          {record.pending_manual === 1 ? '待批阅' : record.passed !== false ? '通过' : '未通过'}
                         </span>
                       </span>
                       {record.duration != null && (
@@ -867,27 +1041,38 @@ export default function Exam() {
                     {record.answers.map((ans, idx) => (
                       <div
                         key={ans.question_id || idx}
-                        className={`p-3 rounded-lg border ${ans.is_correct ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'}`}
+                        className={`p-3 rounded-lg border ${
+                          ans.is_correct === null ? 'bg-amber-50 border-amber-200'
+                            : ans.is_correct ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'
+                        }`}
                       >
                         <div className="flex items-start gap-2">
                           <span className="text-sm font-medium text-warm-500 mt-0.5 shrink-0">
                             {idx + 1}.
                           </span>
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm text-warm-800 mb-1">{ans.content}</p>
+                            <p className="text-sm text-warm-800 mb-1">
+                              {ans.content}
+                              <span className="ml-2 text-xs text-warm-400">{typeLabelOf(ans.type)}</span>
+                            </p>
                             <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
                               <span className="text-warm-500">
-                                你的答案: <strong className={ans.is_correct ? 'text-emerald-600' : 'text-rose-500'}>
+                                你的答案: <strong className={
+                                  ans.is_correct === null ? 'text-amber-600'
+                                    : ans.is_correct ? 'text-emerald-600' : 'text-rose-500'
+                                }>
                                   {ans.user_answer != null ? String(ans.user_answer) : '未作答'}
                                 </strong>
                               </span>
                               <span className="text-warm-500">
-                                正确答案: <strong className="text-emerald-600">
+                                {ans.type === 'short' ? '参考答案' : '正确答案'}: <strong className="text-emerald-600">
                                   {Array.isArray(ans.correct_answer) ? ans.correct_answer.join(', ') : String(ans.correct_answer)}
                                 </strong>
                               </span>
                               <span className="text-warm-500">
-                                得分: <strong>{ans.score}/{ans.total_score}</strong>
+                                得分: <strong>
+                                  {ans.is_correct === null ? '待批阅' : `${ans.score}/${ans.total_score}`}
+                                </strong>
                               </span>
                             </div>
                             {ans.analysis && (
@@ -917,6 +1102,8 @@ export default function Exam() {
       return renderExam();
     case VIEWS.RECORDS:
       return renderRecords();
+    case VIEWS.WRONGS:
+      return renderWrongs();
     default:
       return renderPendingList();
   }

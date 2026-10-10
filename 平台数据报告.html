@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>南孚 DSR 终端跑店宝典 · 平台数据报告</title>
+<style>
+  :root{
+    --ink:#1d1d1f; --soft:#6e6e73; --faint:#b0b0b5;
+    --accent:#0066cc; --line:#e6e6ea; --line2:#f2f2f5;
+    --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","Helvetica Neue","PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{background:#e9e9ee;font-family:var(--font);color:var(--ink);
+       -webkit-font-smoothing:antialiased;letter-spacing:-.01em;
+       display:flex;align-items:center;justify-content:center;padding:14px}
+
+  /* 16:9 单页，内部尺寸随宽度等比缩放 */
+  .sheet{
+    width:min(1280px,97vw); aspect-ratio:16/9; container-type:size;
+    font-size:min(1.094cqw,14px);
+    background:#fff; border-radius:1em; overflow:hidden;
+    padding:1.4em 1.9em 1.2em;
+    display:flex; flex-direction:column;
+    box-shadow:0 18px 50px -18px rgba(0,0,0,.25);
+  }
+
+  /* ---------- 页头：小标签 + 结论式大标题 ---------- */
+  .eyebrow{font-size:.74em;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
+           color:var(--accent);flex:0 0 auto}
+  h1{font-size:3.35em;font-weight:700;line-height:1.16;letter-spacing:-.04em;
+     margin-top:.38em;flex:0 0 auto}
+  h1 span{color:var(--accent)}
+  h1 em{font-style:normal;color:var(--soft);font-size:.34em;font-weight:600;
+        letter-spacing:.12em;display:block;margin-top:.55em}
+
+  /* ---------- 五个支撑分论点 ---------- */
+  .blocks{flex:1;display:grid;grid-template-columns:repeat(5,1fr);
+          gap:1.5em;align-content:center;min-height:0;
+          margin-top:1.3em;padding-top:1.3em;border-top:.07em solid var(--line)}
+  .b{min-height:0;display:flex;flex-direction:column}
+  .b .k{font-size:1.05em;font-weight:700;color:var(--ink);
+        display:flex;align-items:center;gap:.5em}
+  .b .k::before{content:"";width:.3em;height:.85em;border-radius:99px;
+                background:var(--accent);flex:0 0 auto}
+  .b .v{font-size:3.1em;font-weight:700;letter-spacing:-.045em;line-height:1.05;
+        font-variant-numeric:tabular-nums;margin-top:.32em}
+  .b .v i{font-size:.36em;font-weight:500;font-style:normal;color:var(--soft);
+          letter-spacing:0;margin-left:.18em}
+  .b .d{font-size:.9em;color:var(--soft);line-height:1.62;margin-top:.55em}
+  .b .d b{color:var(--ink);font-weight:600}
+
+  /* ---------- 底部图表 ---------- */
+  .chart{flex:0 0 auto;margin-top:1.05em;padding-top:1em;border-top:.07em solid var(--line)}
+  .ct{font-size:.78em;color:var(--soft);display:flex;justify-content:space-between;
+      align-items:baseline;gap:1em;margin-bottom:.55em}
+  .ct b{color:var(--ink);font-weight:600}
+  .plot{display:flex;align-items:flex-end;gap:.42em;height:4.5em;
+        border-bottom:.07em solid var(--line2);padding-top:.5em}
+  .plot .col{flex:1;display:flex;flex-direction:column;align-items:center;
+             justify-content:flex-end;height:100%;gap:.22em}
+  .plot .val{font-size:.62em;color:var(--faint);font-variant-numeric:tabular-nums}
+  .plot .bar{width:100%;border-radius:.2em .2em 0 0;background:#cfe2f3;min-height:.15em}
+  .plot .col.pk .bar{background:var(--accent)}
+  .plot .col.pk .val{color:var(--accent);font-weight:700}
+  .xax{display:flex;gap:.42em;margin-top:.32em}
+  .xax span{flex:1;text-align:center;font-size:.6em;color:var(--faint)}
+
+  @media print{
+    body{background:#fff;padding:0;display:block}
+    .sheet{width:100%;box-shadow:none;border-radius:0;font-size:13.5px}
+    @page{size:A4 landscape;margin:8mm}
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <!-- 页头：小标签 + 结论 -->
+  <div class="eyebrow">Nanfu DSR · 平台数据报告</div>
+  <h1>
+    平台已全员落地<br />
+    <span>AI 赋能与经验共享，均已形成规模</span>
+    <em>2026-07-27 ~ 10-08　·　5,536 名业务员 · 6 大区 47 区域</em>
+  </h1>
+
+  <!-- 四个支撑分论点 -->
+  <div class="blocks">
+
+    <div class="b">
+      <div class="k">全员覆盖已达成</div>
+      <div class="v">5,536<i>人</i></div>
+      <div class="d">业务员账号<b>全部开通</b><br />覆盖 6 个大区、47 个区域<br />近 30 天活跃 3,340 人</div>
+    </div>
+
+    <div class="b">
+      <div class="k">一线高频答疑</div>
+      <div class="v">33,998<i>次</i></div>
+      <div class="d">1,984 人使用，<b>好评率 99.8%</b><br />跑店遇到问题，当场问当场答<br />对话收藏 307 条</div>
+    </div>
+
+    <div class="b">
+      <div class="k">实战练兵规模化</div>
+      <div class="v">9,455<i>场</i></div>
+      <div class="d">1,019 人参与<br />产出 <b>6,059 份</b>能力评估<br />优良率 68.3%，18 个实战情景</div>
+    </div>
+
+    <div class="b">
+      <div class="k">学考闭环已跑通</div>
+      <div class="v">85.7<i>%</i></div>
+      <div class="d">在线考试及格率<br />学习完成率 <b>98.4%</b><br />23 门课程，1,433 人学习</div>
+    </div>
+
+    <div class="b">
+      <div class="k">经验共享成规模</div>
+      <div class="v">9,713<i>条</i></div>
+      <div class="d"><b>819 人</b>发布一线动态<br />累计点赞 719 次<br />沉淀可复用的一线经验</div>
+    </div>
+
+  </div>
+
+  <!-- 底部图表：支撑"高频使用" -->
+  <div class="chart">
+    <div class="ct">
+      <span>近 14 天每日活跃人数</span>
+      <span>日均 <b>816 人</b>　·　峰值 <b>1,177 人</b>（9-28）　·　使用高峰集中在早会时段，占全天 <b>31.6%</b></span>
+    </div>
+    <div class="plot">
+      <div class="col"><span class="val">699</span><div class="bar" style="height:59%"></div></div>
+      <div class="col"><span class="val">718</span><div class="bar" style="height:61%"></div></div>
+      <div class="col"><span class="val">852</span><div class="bar" style="height:72%"></div></div>
+      <div class="col pk"><span class="val">1177</span><div class="bar" style="height:100%"></div></div>
+      <div class="col"><span class="val">1045</span><div class="bar" style="height:89%"></div></div>
+      <div class="col"><span class="val">980</span><div class="bar" style="height:83%"></div></div>
+      <div class="col"><span class="val">726</span><div class="bar" style="height:62%"></div></div>
+      <div class="col"><span class="val">745</span><div class="bar" style="height:63%"></div></div>
+      <div class="col"><span class="val">724</span><div class="bar" style="height:62%"></div></div>
+      <div class="col"><span class="val">688</span><div class="bar" style="height:58%"></div></div>
+      <div class="col"><span class="val">732</span><div class="bar" style="height:62%"></div></div>
+      <div class="col"><span class="val">745</span><div class="bar" style="height:63%"></div></div>
+      <div class="col"><span class="val">783</span><div class="bar" style="height:67%"></div></div>
+      <div class="col"><span class="val">811</span><div class="bar" style="height:69%"></div></div>
+    </div>
+    <div class="xax">
+      <span>9/25</span><span>26</span><span>27</span><span>28</span><span>29</span><span>30</span>
+      <span>10/1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

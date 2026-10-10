@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>南孚 DSR 销售培训系统 · 运营汇报</title>
+<style>
+  :root{
+    --bg:#f5f5f7;
+    --ink:#1d1d1f;
+    --ink-soft:#6e6e73;
+    --ink-faint:#aeaeb2;
+    --accent:#0066cc;
+    --line:rgba(0,0,0,.09);
+    --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Helvetica Neue","PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden}
+  body{
+    background:var(--bg);color:var(--ink);font-family:var(--font);
+    -webkit-font-smoothing:antialiased;letter-spacing:-.01em;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .orb{position:fixed;border-radius:50%;filter:blur(90px);pointer-events:none;z-index:0}
+  .orb-1{width:46vw;height:46vw;top:-16vw;left:-12vw;background:radial-gradient(circle,rgba(0,102,204,.15),transparent 70%)}
+  .orb-2{width:36vw;height:36vw;bottom:-14vw;right:-10vw;background:radial-gradient(circle,rgba(124,92,255,.11),transparent 70%)}
+
+  .page{
+    position:relative;z-index:1;
+    width:min(1140px,90vw);max-height:94vh;
+    display:flex;flex-direction:column;justify-content:center;
+  }
+
+  /* ---------- 头部 ---------- */
+  .eyebrow{
+    font-size:12px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--accent);margin-bottom:clamp(14px,2vh,22px);
+  }
+  h1{
+    font-size:clamp(28px,3.3vw,46px);font-weight:700;line-height:1.18;letter-spacing:-.035em;
+  }
+  h1 .accent{color:var(--accent)}
+  .sub{
+    font-size:clamp(13.5px,1.08vw,16.5px);color:var(--ink-soft);line-height:1.62;
+    max-width:64ch;margin-top:clamp(12px,1.6vh,18px);font-weight:400;
+  }
+
+  /* ---------- 价值区块 ---------- */
+  .values{
+    display:grid;grid-template-columns:1fr 1fr;
+    gap:clamp(26px,3.6vh,44px) clamp(34px,5vw,84px);
+    margin-top:clamp(28px,4.6vh,50px);
+    padding-top:clamp(26px,4vh,42px);
+    border-top:1px solid var(--line);
+  }
+  .v-kicker{
+    font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--ink-faint);display:flex;align-items:center;gap:8px;
+    margin-bottom:clamp(9px,1.3vh,13px);
+  }
+  .v-kicker::before{
+    content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);flex:0 0 auto;
+  }
+  .v-num{
+    font-size:clamp(26px,3.1vw,44px);font-weight:700;line-height:1;letter-spacing:-.045em;
+    font-variant-numeric:tabular-nums;
+  }
+  .v-num .unit{font-size:.34em;font-weight:500;color:var(--ink-soft);letter-spacing:0;margin-left:5px}
+  .v-desc{
+    font-size:clamp(12.5px,.96vw,14.5px);color:var(--ink-soft);line-height:1.58;
+    margin-top:clamp(9px,1.3vh,13px);max-width:46ch;
+  }
+  .v-desc b{color:var(--ink);font-weight:600}
+
+  /* ---------- 下一步 ---------- */
+  .next{
+    margin-top:clamp(26px,4vh,44px);padding-top:clamp(18px,2.6vh,26px);
+    border-top:1px solid var(--line);
+    display:flex;align-items:baseline;gap:clamp(14px,2vw,28px);flex-wrap:wrap;
+  }
+  .next .n-label{
+    font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);flex:0 0 auto;
+  }
+  .next ul{list-style:none;display:flex;gap:clamp(14px,2.4vw,34px);flex-wrap:wrap}
+  .next li{
+    font-size:clamp(12.5px,.96vw,14.5px);color:var(--ink);display:flex;gap:9px;align-items:baseline;
+  }
+  .next li .i{font-size:11px;color:var(--ink-faint);font-variant-numeric:tabular-nums}
+
+  /* ---------- 页脚 ---------- */
+  .foot{
+    margin-top:clamp(18px,2.8vh,30px);
+    font-size:11.5px;color:var(--ink-faint);letter-spacing:.02em;
+    display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  }
+
+  @media (max-width:900px){
+    html,body{overflow:auto}
+    .page{padding:40px 0}
+    .values{grid-template-columns:1fr;gap:30px}
+  }
+  @media print{
+    html,body{overflow:visible;height:auto}
+    .page{max-height:none}
+    @page{size:A4 landscape;margin:14mm}
+  }
+</style>
+</head>
+<body>
+<div class="orb orb-1"></div>
+<div class="orb orb-2"></div>
+
+<div class="page">
+
+  <div class="eyebrow">Nanfu DSR · 运营汇报</div>
+
+  <h1>
+    让 5,536 名一线业务员<br />
+    <span class="accent">随时可问、随时可练</span>
+  </h1>
+
+  <p class="sub">
+    5,536 名业务员账号全部开通，分布在 6 个大区、47 个区域，
+    把过去依赖"找人问、老带新"的销售赋能，变成人人可用、随时在线的自助能力。
+  </p>
+
+  <div class="values">
+
+    <div>
+      <div class="v-kicker">触达 · 全员上线</div>
+      <div class="v-num">5,536<span class="unit">人</span></div>
+      <div class="v-desc">
+        业务员账号<b>全部开通</b>，分布在 6 个大区、47 个区域，
+        培训、通知与激励可一次直达全部一线，不再层层传递。
+      </div>
+    </div>
+
+    <div>
+      <div class="v-kicker">答疑 · 即问即答</div>
+      <div class="v-num">33,861<span class="unit">次</span></div>
+      <div class="v-desc">
+        AI 智能问答累计答题 <b>33,861 次</b>，好评率 <b>99.8%</b>——
+        业务员跑店遇到问题不再等人回复，当场就能拿到答案。
+      </div>
+    </div>
+
+    <div>
+      <div class="v-kicker">练兵 · 规模化实战</div>
+      <div class="v-num">9,428<span class="unit">场</span></div>
+      <div class="v-desc">
+        实战陪练累计开启 <b>9,428 场</b>、产出 <b>6,041 份</b>能力评估，评估优良率 <b>68.2%</b>——
+        把带教从个人经验，变成可复制、可量化的标准动作。
+      </div>
+    </div>
+
+    <div>
+      <div class="v-kicker">考核 · 效果可衡量</div>
+      <div class="v-num">85.8<span class="unit">%</span></div>
+      <div class="v-desc">
+        在线考试及格率 <b>85.8%</b>（2,935 人次）、学习完成率 <b>98.4%</b>——
+        培训从"办了多少场"，变成"学会了没有"。
+      </div>
+    </div>
+
+  </div>
+
+  <div class="next">
+    <span class="n-label">下阶段</span>
+    <ul>
+      <li><span class="i">01</span>激活未登录人员，提升使用频次</li>
+      <li><span class="i">02</span>AI 功能全员覆盖，复制标杆大区经验</li>
+      <li><span class="i">03</span>优化积分导向，推动能力向业绩转化</li>
+    </ul>
+  </div>
+
+  <div class="foot">
+    <span>数据截止 2026-10-08 · 统计周期 07-27 ~ 10-08</span>
+    <span>数据来源：平台生产数据</span>
+  </div>
+
+</div>
+</body>
+</html>

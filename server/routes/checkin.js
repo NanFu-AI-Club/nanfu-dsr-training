@@ -3,28 +3,43 @@
  * 表: check_ins, point_rules, point_logs, users, learning_progress, exam_records, training_sessions
  */
 const express = require('express');
+const { todayShanghai } = require('../utils/time');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { authRequired, adminRequired } = require('../middleware/auth');
+const { applyLevelBonus } = require('../utils/points');
 
 // ==================== 辅助函数 ====================
 
 function todayStr() {
-  const d = new Date();
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  return todayShanghai();
 }
 
 /**
  * 发放积分
  */
+function logActivity(db, userId, action, targetType, targetId, detail, ip) {
+  db.prepare(`
+    INSERT INTO activity_logs (id, user_id, action, module, target_type, target_id, detail, ip, created_at)
+    VALUES (?, ?, ?, 'checkin', ?, ?, ?, ?, datetime('now','localtime'))
+  `).run(uuidv4(), userId, action, targetType || null, targetId || null,
+    typeof detail === 'string' ? detail : JSON.stringify(detail || {}), ip || null);
+}
+
+/**
+ * 发放积分（自动应用等级加成）
+ */
 function awardPoints(db, userId, points, reason, sourceType, sourceId) {
+  const { awarded } = applyLevelBonus(db, userId, points);
+  if (awarded <= 0) return 0;
   const logId = uuidv4();
   db.prepare(`
     INSERT INTO point_logs (id, user_id, points, reason, source_type, source_id, created_at)
     VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime'))
-  `).run(logId, userId, points, reason || '', sourceType || '', sourceId || '');
-  db.prepare('UPDATE users SET points = points + ?, total_earned_points = total_earned_points + ?, updated_at = datetime("now","localtime") WHERE id = ?')
-    .run(points, points, userId);
+  `).run(logId, userId, awarded, reason || '', sourceType || '', sourceId || '');
+  db.prepare("UPDATE users SET points = points + ?, total_earned_points = total_earned_points + ?, updated_at = datetime('now','localtime') WHERE id = ?")
+    .run(awarded, awarded, userId);
+  return awarded;
 }
 
 /**
@@ -158,6 +173,9 @@ router.post('/', authRequired, (req, res) => {
       ? `签到第${newStreak}天${bonusReason}`
       : `签到第${newStreak}天`;
     awardPoints(db, userId, totalPoints, reason, 'check_in', checkinId);
+    logActivity(db, userId, 'check_in', 'check_in', checkinId, {
+      check_date: today, points_earned: totalPoints, streak_count: newStreak
+    }, req.ip);
 
     res.json({
       code: 0,

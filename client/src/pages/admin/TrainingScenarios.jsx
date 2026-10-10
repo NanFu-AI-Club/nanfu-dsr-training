@@ -3,6 +3,7 @@ import {
   Plus, Edit3, Trash2, X, Power, PowerOff, MessageSquare,
 } from 'lucide-react';
 import api from '../../api';
+import { formatShanghai } from '../../utils/time';
 
 const STATUS_LABELS = {
   active: '启用',
@@ -10,6 +11,7 @@ const STATUS_LABELS = {
 };
 
 const DIFFICULTY_LABELS = {
+  hot: '热点必练',
   easy: '简单',
   medium: '中等',
   hard: '困难',
@@ -55,6 +57,7 @@ function ScenarioModal({ open, onClose, onSave, form, setForm, editingId }) {
               value={form.difficulty || 'medium'}
               onChange={(e) => setForm({ ...form, difficulty: e.target.value })}
             >
+              <option value="hot">热点必练</option>
               <option value="easy">简单</option>
               <option value="medium">中等</option>
               <option value="hard">困难</option>
@@ -89,7 +92,19 @@ function ScenarioModal({ open, onClose, onSave, form, setForm, editingId }) {
               onChange={(e) => setForm({ ...form, sales_goal: e.target.value })}
               placeholder="如：成功说服客户采购南孚电池200箱 / 达成首单合作 / 促成季度框架协议"
             />
-            <p className="text-xs text-warm-500 mt-1">本次陪练的销售目标，AI会根据销售代表的表现决定是否达成，评估报告也会基于目标达成度打分</p>
+            <p className="text-xs text-warm-500 mt-1">本次FU利陪陪的销售目标，AI会根据销售代表的表现决定是否达成，评估报告也会基于目标达成度打分</p>
+          </div>
+          {/* 跳转链接 */}
+          <div>
+            <label className="block text-sm font-medium text-warm-700 mb-1">跳转链接</label>
+            <input
+              className="input"
+              type="url"
+              value={form.link_url || ''}
+              onChange={(e) => setForm({ ...form, link_url: e.target.value })}
+              placeholder="如：https://example.com/product（选填，场景卡片上会显示跳转入口）"
+            />
+            <p className="text-xs text-warm-500 mt-1">选填。配置后，业务员在情景卡片上可点击跳转到该外部链接。</p>
           </div>
           {/* 标签 */}
           <div>
@@ -140,6 +155,7 @@ export default function TrainingScenarios() {
     description: '',
     scenario_prompt: '',
     sales_goal: '',
+    link_url: '',
     tags: '',
     status: 'active',
   });
@@ -178,6 +194,7 @@ export default function TrainingScenarios() {
       description: '',
       scenario_prompt: '',
       sales_goal: '',
+      link_url: '',
       tags: '',
       status: 'active',
     });
@@ -193,6 +210,7 @@ export default function TrainingScenarios() {
       description: scenario.description || '',
       scenario_prompt: scenario.scenario_prompt || '',
       sales_goal: scenario.sales_goal || '',
+      link_url: scenario.link_url || '',
       tags: Array.isArray(scenario.tags) ? scenario.tags.join(', ') : (scenario.tags || ''),
       status: scenario.status || 'active',
     });
@@ -233,7 +251,7 @@ export default function TrainingScenarios() {
 
   /* ================= 删除 ================= */
   const deleteScenario = async (scenario) => {
-    if (!window.confirm(`确定删除情景「${scenario.title}」？此操作不可撤销，相关陪练会话数据也会被清除。`)) return;
+    if (!window.confirm(`确定删除情景「${scenario.title}」？此操作不可撤销，相关FU利陪陪会话数据也会被清除。`)) return;
     try {
       await api.delete(`/training/scenarios/${scenario.id}`);
       fetchScenarios();
@@ -256,6 +274,7 @@ export default function TrainingScenarios() {
   /* ================= 渲染辅助 ================= */
   const difficultyBadge = (d) => {
     const map = {
+      hot: 'bg-orange-100 text-orange-700',
       easy: 'bg-emerald-100 text-emerald-700',
       medium: 'bg-accent-100 text-yellow-700',
       hard: 'bg-rose-100 text-red-700',
@@ -280,7 +299,7 @@ export default function TrainingScenarios() {
     <div className="space-y-4">
       {/* 标题栏 */}
       <div className="flex items-center justify-between">
-        <h1 className="page-title">AI 陪练情景管理</h1>
+        <h1 className="page-title">FU利陪陪情景管理</h1>
         <button onClick={openCreate} className="btn-primary flex items-center gap-1.5 text-sm">
           <Plus size={16} /> 新建情景
         </button>
@@ -363,7 +382,7 @@ export default function TrainingScenarios() {
                     <td className="px-4 py-3">{difficultyBadge(s.difficulty)}</td>
                     <td className="px-4 py-3">{statusBadge(s.status)}</td>
                     <td className="px-4 py-3 text-warm-500 text-xs">
-                      {s.created_at ? new Date(s.created_at).toLocaleString('zh-CN') : '-'}
+                      {s.created_at ? formatShanghai(s.created_at) : '-'}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-center gap-1">

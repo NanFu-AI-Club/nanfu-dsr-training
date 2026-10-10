@@ -1,12 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Search, Plus, Edit3, Trash2, Upload, Download, X, PlusCircle, MinusCircle, Power, PowerOff } from 'lucide-react';
 import api from '../../api';
+import { todayShanghai } from '../../utils/time';
 
 const QUESTION_TYPES = [
   { value: '', label: '全部类型' },
   { value: 'single', label: '单选题' },
   { value: 'multiple', label: '多选题' },
   { value: 'judge', label: '判断题' },
+  { value: 'fill', label: '填空题' },
+  { value: 'short', label: '简答题' },
 ];
 
 const DIFFICULTY_LEVELS = [
@@ -23,6 +26,8 @@ const typeBadgeClass = (type) => {
     case 'single': return 'badge-blue';
     case 'multiple': return 'badge-purple bg-purple-100 text-purple-800';
     case 'judge': return 'badge-yellow';
+    case 'fill': return 'badge-green';
+    case 'short': return 'badge-red';
     default: return 'badge-gray';
   }
 };
@@ -32,6 +37,8 @@ const typeLabel = (type) => {
     case 'single': return '单选题';
     case 'multiple': return '多选题';
     case 'judge': return '判断题';
+    case 'fill': return '填空题';
+    case 'short': return '简答题';
     default: return type;
   }
 };
@@ -154,14 +161,22 @@ export default function Questions() {
   };
 
   const saveQuestion = async () => {
-    if (!form.content.trim()) return;
+    if (!form.content.trim()) {
+      alert('请填写题目内容');
+      return;
+    }
+    const isChoice = form.type === 'single' || form.type === 'multiple';
+    if ((form.type === 'fill' || form.type === 'short') && !form.answer.trim()) {
+      alert(form.type === 'fill' ? '请填写填空题的正确答案' : '请填写简答题的参考答案');
+      return;
+    }
     try {
       const payload = {
         type: form.type,
         category: form.category_id || null,  // 后端字段名为 category
         content: form.content,
         tags: form.tags ? form.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
-        options: form.options.filter((o) => o.trim()),
+        options: isChoice ? form.options.filter((o) => o.trim()) : null,
         answer: form.type === 'multiple'
           ? form.answer.split(',').map((a) => a.trim()).filter(Boolean)
           : form.answer,
@@ -317,6 +332,8 @@ export default function Questions() {
       '单选题': 'single', 'single': 'single',
       '多选题': 'multiple', 'multiple': 'multiple',
       '判断题': 'judge', 'judge': 'judge',
+      '填空题': 'fill', 'fill': 'fill',
+      '简答题': 'short', 'short': 'short',
     };
 
     // 难度映射：支持中文和英文
@@ -332,17 +349,17 @@ export default function Questions() {
       const row = importPreview[i];
       const type = typeMap[row.type?.toLowerCase()] || typeMap[row.type] || row.type;
 
-      if (!['single', 'multiple', 'judge'].includes(type)) {
-        setImportError(`第 ${i + 1} 行类型无效: ${row.type}（应为 single/multiple/judge 或 单选题/多选题/判断题）`);
+      if (!['single', 'multiple', 'judge', 'fill', 'short'].includes(type)) {
+        setImportError(`第 ${i + 1} 行类型无效: ${row.type}（应为 single/multiple/judge/fill/short 或 单选题/多选题/判断题/填空题/简答题）`);
         setImporting(false);
         return;
       }
 
-      // 解析选项：用 | 分隔
-      let options;
+      // 解析选项：用 | 分隔（填空/简答题无需选项）
+      let options = [];
       if (type === 'judge') {
         options = ['是', '否'];
-      } else {
+      } else if (type === 'single' || type === 'multiple') {
         options = row.optionsRaw
           ? row.optionsRaw.split('|').map((o) => o.trim()).filter(Boolean)
           : [];
@@ -355,9 +372,7 @@ export default function Questions() {
 
       // 解析答案
       let answer;
-      if (type === 'single') {
-        answer = row.answer;
-      } else if (type === 'multiple') {
+      if (type === 'multiple') {
         // 支持 "A|B|D" 或 "ABD" 或 "A,B,D"
         const rawAnswer = String(row.answer || '');
         answer = rawAnswer.includes('|')
@@ -365,8 +380,17 @@ export default function Questions() {
           : rawAnswer.includes(',')
           ? rawAnswer.split(',').map((a) => a.trim()).filter(Boolean)
           : rawAnswer.split('').filter(Boolean);
-      } else { // judge
-        answer = (row.answer === '是' || row.answer === '正确' || row.answer.toLowerCase() === 'true') ? 'true' : 'false';
+      } else if (type === 'judge') {
+        answer = (row.answer === '是' || row.answer === '正确' || String(row.answer).toLowerCase() === 'true') ? 'true' : 'false';
+      } else {
+        // single / fill / short：原文保留（填空题多个答案用 | 分隔）
+        answer = row.answer;
+      }
+
+      if ((type === 'fill' || type === 'short') && !String(answer ?? '').trim()) {
+        setImportError(`第 ${i + 1} 行缺少${type === 'fill' ? '正确答案' : '参考答案'}`);
+        setImporting(false);
+        return;
       }
 
       // 解析难度
@@ -428,7 +452,7 @@ export default function Questions() {
       const url = window.URL.createObjectURL(new Blob([res]));
       const link = document.createElement('a');
       link.href = url;
-      link.download = `题库导出_${new Date().toISOString().slice(0, 10)}.json`;
+      link.download = `题库导出_${todayShanghai()}.json`;
       link.click();
       window.URL.revokeObjectURL(url);
     } catch (err) {
@@ -692,12 +716,23 @@ export default function Questions() {
               {/* 正确答案 */}
               <div>
                 <label className="block text-sm font-medium text-warm-700 mb-1">
-                  正确答案
+                  {form.type === 'short' ? '参考答案' : '正确答案'}
                   {form.type === 'single' && <span className="text-warm-400 font-normal ml-1">（输入选项字母，如 A）</span>}
                   {form.type === 'multiple' && <span className="text-warm-400 font-normal ml-1">（多个用逗号分隔，如 A,C）</span>}
                   {form.type === 'judge' && <span className="text-warm-400 font-normal ml-1">（正确/错误 或 true/false）</span>}
+                  {form.type === 'fill' && <span className="text-warm-400 font-normal ml-1">（判分忽略大小写、空格与标点；多个可接受答案用 | 分隔）</span>}
+                  {form.type === 'short' && <span className="text-warm-400 font-normal ml-1">（主观题，交卷后由管理员人工批阅）</span>}
                 </label>
-                <input className="input" value={form.answer} onChange={(e) => setForm({ ...form, answer: e.target.value })} placeholder="正确答案" />
+                {form.type === 'short' ? (
+                  <textarea
+                    className="input min-h-[80px] resize-y"
+                    value={form.answer}
+                    onChange={(e) => setForm({ ...form, answer: e.target.value })}
+                    placeholder="输入参考答案要点，供批阅时参考"
+                  />
+                ) : (
+                  <input className="input" value={form.answer} onChange={(e) => setForm({ ...form, answer: e.target.value })} placeholder="正确答案" />
+                )}
               </div>
 
               {/* 解析 */}

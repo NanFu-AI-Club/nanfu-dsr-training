@@ -14,10 +14,9 @@ echo "[1/4] 安装后端依赖..."
 cd "$SCRIPT_DIR/server"
 npm install --silent
 
-# 初始化数据库
+# 初始化数据库（仅执行增量迁移，不删除现有数据）
 echo "[2/4] 初始化数据库..."
-rm -f data/nanfu_dsr.db
-node database.js --reset --seed
+node database.js --seed
 
 # 安装前端依赖
 echo "[3/4] 安装前端依赖..."

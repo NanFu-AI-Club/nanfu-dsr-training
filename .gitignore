@@ -49,8 +49,14 @@ server/latency-test.js
 server/stress-test.js
 server/test-login.js
 server/check-courses-local.js
+server/check_user.js
+server/read-real-data.js
+server/tmp-*.js
 *.sh
 *.py
+
+# Local debug artifacts
+.dbg/
 
 # Data / documents
 *.xlsx

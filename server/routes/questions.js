@@ -3,9 +3,18 @@
  * 表: questions, activity_logs
  */
 const express = require('express');
+const { todayShanghai, nowShanghaiString } = require('../utils/time');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { authRequired, adminRequired } = require('../middleware/auth');
+const { applyLevelBonus } = require('../utils/points');
+
+// ==================== 常量 ====================
+
+// 支持的题型：单选/多选/判断/填空/简答
+const QUESTION_TYPES = ['single', 'multiple', 'judge', 'fill', 'short'];
+// 每日一题仅抽取客观题（填空/简答不参与每日一题）
+const DAILY_TYPES = ['single', 'multiple', 'judge'];
 
 // ==================== 辅助函数 ====================
 
@@ -115,7 +124,7 @@ router.post('/batch', authRequired, adminRequired, (req, res) => {
         errors.push({ index: i, message: 'type/content/answer 不能为空' });
         continue;
       }
-      if (!['single', 'multiple', 'judge'].includes(q.type)) {
+      if (!QUESTION_TYPES.includes(q.type)) {
         failCount++;
         errors.push({ index: i, message: `无效的题目类型: ${q.type}` });
         continue;
@@ -208,7 +217,7 @@ router.get('/daily', authRequired, (req, res) => {
   try {
     const db = req.db;
     const userId = req.user.id;
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayShanghai();
 
     // 检查今天是否已经答过
     const existingLog = db.prepare(`
@@ -226,7 +235,11 @@ router.get('/daily', authRequired, (req, res) => {
 
     // 基于日期生成确定性种子，保证每天所有用户看到同一题
     const seed = parseInt(today.replace(/-/g, ''), 10);
-    const count = db.prepare("SELECT COUNT(*) as count FROM questions WHERE status = 'active'").get().count;
+    // 仅抽取可自动判分的客观题（填空/简答不作为每日一题）
+    const dailyTypePlaceholders = DAILY_TYPES.map(() => '?').join(',');
+    const count = db.prepare(
+      `SELECT COUNT(*) as count FROM questions WHERE status = 'active' AND type IN (${dailyTypePlaceholders})`
+    ).get(...DAILY_TYPES).count;
 
     if (count === 0) {
       return res.json({ code: 0, data: { answered: false, question: null } });
@@ -235,9 +248,9 @@ router.get('/daily', authRequired, (req, res) => {
     const offset = seed % count;
     const question = db.prepare(`
       SELECT id, type, content, options, category, difficulty
-      FROM questions WHERE status = 'active'
+      FROM questions WHERE status = 'active' AND type IN (${dailyTypePlaceholders})
       LIMIT 1 OFFSET ?
-    `).get(offset);
+    `).get(...DAILY_TYPES, offset);
 
     // 解析 options JSON
     if (question && question.options) {
@@ -256,7 +269,7 @@ router.post('/daily/answer', authRequired, (req, res) => {
   try {
     const db = req.db;
     const userId = req.user.id;
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayShanghai();
     const { question_id, answer } = req.body;
 
     if (!question_id || answer === undefined) {
@@ -323,8 +336,9 @@ router.post('/daily/answer', authRequired, (req, res) => {
     // 积分奖励：从 point_rules 读取配置
     const correctRule = db.prepare("SELECT points FROM point_rules WHERE source_type = 'daily_question_correct' AND enabled = 1").get();
     const wrongRule = db.prepare("SELECT points FROM point_rules WHERE source_type = 'daily_question_wrong' AND enabled = 1").get();
-    const earnedPoints = isCorrect ? (correctRule?.points || 10) : (wrongRule?.points || 2);
-    const now = new Date().toISOString();
+    const basePoints = isCorrect ? (correctRule?.points || 10) : (wrongRule?.points || 2);
+    const { awarded: earnedPoints } = applyLevelBonus(db, userId, basePoints);
+    const now = nowShanghaiString();
 
     db.prepare('UPDATE users SET points = points + ?, total_earned_points = total_earned_points + ? WHERE id = ?').run(earnedPoints, earnedPoints, userId);
     db.prepare(`
@@ -382,8 +396,15 @@ router.post('/', authRequired, adminRequired, (req, res) => {
     if (!type || !content || answer === undefined || answer === null) {
       return res.status(400).json({ code: 400, message: '题目类型、内容和答案不能为空' });
     }
-    if (!['single', 'multiple', 'judge'].includes(type)) {
-      return res.status(400).json({ code: 400, message: '题目类型无效，仅支持 single/multiple/judge' });
+    if (!QUESTION_TYPES.includes(type)) {
+      return res.status(400).json({ code: 400, message: '题目类型无效，仅支持 single/multiple/judge/fill/short' });
+    }
+    // 填空/简答题必须有文本答案（填空题用于自动判分，简答题作为参考答案）
+    if ((type === 'fill' || type === 'short') && !String(answer ?? '').trim()) {
+      return res.status(400).json({
+        code: 400,
+        message: type === 'fill' ? '填空题需要填写正确答案' : '简答题需要填写参考答案',
+      });
     }
 
     const id = uuidv4();
@@ -425,6 +446,10 @@ router.put('/:id', authRequired, adminRequired, (req, res) => {
     const question = db.prepare('SELECT * FROM questions WHERE id = ?').get(id);
     if (!question) {
       return res.status(404).json({ code: 404, message: '题目不存在' });
+    }
+
+    if (type !== undefined && !QUESTION_TYPES.includes(type)) {
+      return res.status(400).json({ code: 400, message: '题目类型无效，仅支持 single/multiple/judge/fill/short' });
     }
 
     const updates = [];

@@ -6,25 +6,34 @@
 const rateLimitStore = new Map();
 
 // 登录速率限制
-const loginLimiter = (maxAttempts = 5, windowMs = 60000) => {
+// 双重限制：同一「账号+IP」严格（防单账号爆破）；同一「IP 总量」宽松（防换用户名爆破）
+// 这样多人共用同一出口 IP（同一门店 WiFi / 办公区）时，各自账号互不影响
+const loginLimiter = (maxAttempts = 5, windowMs = 60000, ipMaxAttempts = 60) => {
   return (req, res, next) => {
     const ip = req.ip || req.connection.remoteAddress;
-    const key = `login:${ip}`;
+    const username = (req.body && req.body.username ? String(req.body.username) : '').trim().toLowerCase();
     const now = Date.now();
 
-    const record = rateLimitStore.get(key) || { count: 0, firstAttempt: now };
+    const bump = (key, max) => {
+      const record = rateLimitStore.get(key) || { count: 0, firstAttempt: now };
+      // 窗口过期，重置
+      if (now - record.firstAttempt > windowMs) {
+        record.count = 0;
+        record.firstAttempt = now;
+      }
+      record.count++;
+      rateLimitStore.set(key, record);
+      return {
+        blocked: record.count > max,
+        retryAfter: Math.ceil((record.firstAttempt + windowMs - now) / 1000)
+      };
+    };
 
-    // 窗口过期，重置
-    if (now - record.firstAttempt > windowMs) {
-      record.count = 0;
-      record.firstAttempt = now;
-    }
+    const acct = bump(`login:acct:${ip}:${username}`, maxAttempts);
+    const ipTotal = bump(`login:ip:${ip}`, ipMaxAttempts);
 
-    record.count++;
-    rateLimitStore.set(key, record);
-
-    if (record.count > maxAttempts) {
-      const retryAfter = Math.ceil((record.firstAttempt + windowMs - now) / 1000);
+    if (acct.blocked || ipTotal.blocked) {
+      const retryAfter = Math.max(acct.retryAfter, ipTotal.retryAfter, 1);
       res.setHeader('Retry-After', retryAfter);
       return res.status(429).json({
         code: 429,

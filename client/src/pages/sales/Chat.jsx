@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Send, Menu, ChevronLeft, Plus, ThumbsUp, ThumbsDown,
-  Star, MessageSquare, Trash2, Loader2, AlertCircle, BookOpen,
+  Star, MessageSquare, Trash2, Loader2, AlertCircle,
   Sparkles, Lightbulb, Zap, Search, ChevronRight, X,
   Mic, MicOff, Volume2, VolumeX,
 } from 'lucide-react';
 import api from '../../api';
+import { formatShanghai } from '../../utils/time';
 
 /* ========== 推荐问题图标颜色 ========== */
 const ICON_STYLES = [
@@ -45,6 +47,14 @@ function Chat() {
   const ttsAudioRef = useRef(null);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+  // "没用"反馈弹窗
+  const [dislikeModal, setDislikeModal] = useState(null); // { messageId, dbId }
+  const [dislikeReason, setDislikeReason] = useState('');
+  const [pointsToast, setPointsToast] = useState(null); // 反馈获得积分的提示
+  const [dislikeRecording, setDislikeRecording] = useState(false);
+  const [dislikeTranscribing, setDislikeTranscribing] = useState(false);
+  const dislikeRecorderRef = useRef(null);
+  const dislikeChunksRef = useRef([]);
 
   // 停止所有语音播放
   const stopAllTTS = useCallback(() => {
@@ -254,7 +264,7 @@ function Chat() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         const isHTTP = location.protocol === 'http:';
         if (isHTTP) {
-          alert('麦克风需要 HTTPS 安全连接。\n\n请在浏览器地址栏输入：\nhttps://1.15.172.36\n\n（首次打开会提示"不安全"，点击"高级"→"继续访问"即可）');
+          alert('麦克风需要 HTTPS 安全连接。\n\n请在浏览器地址栏输入：\nhttps://pdbd.nanfu.com');
         } else {
           alert('当前浏览器不支持麦克风功能，请使用 Chrome/Safari/Edge 浏览器');
         }
@@ -321,7 +331,7 @@ function Chat() {
       if (err.name === 'NotAllowedError') {
         const isHTTP = location.protocol === 'http:';
         errMsg = isHTTP
-          ? '麦克风需要HTTPS安全连接。\n\n请访问 https://1.15.172.36\n（首次打开需点击"高级"→"继续访问"）'
+          ? '麦克风需要HTTPS安全连接。\n\n请访问 https://pdbd.nanfu.com'
           : '请允许麦克风权限后重试（在浏览器设置中开启麦克风权限）';
       } else if (err.name === 'NotFoundError') {
         errMsg = '未检测到麦克风设备';
@@ -343,16 +353,23 @@ function Chat() {
 
   // ==================== 提取"回答的话术"用于语音播放 ====================
   const extractSpeechText = (content) => {
-    // 匹配 "2. 回答的话术" 或 "回答的话术：" 后面的内容
+    if (!content) return '';
+    // 回答结构：🗣️ 2. 标准回答话术 … / ⚡ 3. 15 秒极简版话术 … / 📌 补充提示 …
+    // 只播报话术段落，思路分析、补充提示等不朗读
     const patterns = [
-      /2\.\s*回答的话术\s*[：:]*\s*\n([\s\S]*?)(?=\n\s*\d+\.\s|$)/,
-      /回答的话术\s*[：:]\s*\n?([\s\S]*?)(?=\n\s*\d+\.\s|$)/,
+      // 优先「标准回答话术」，取到下一个标题为止
+      /(?:^|\n)[^\n]*回答话术[^\n]*\n([\s\S]*?)(?=\n[^\n]*(?:极简版话术|补充提示|注意事项)|$)/,
+      // 兜底「15 秒极简版话术」
+      /(?:^|\n)[^\n]*极简版话术[^\n]*\n([\s\S]*?)(?=\n[^\n]*(?:补充提示|注意事项)|$)/,
     ];
     for (const p of patterns) {
       const match = content.match(p);
-      if (match && match[1]?.trim()) return match[1].trim();
+      if (match && match[1]?.trim()) {
+        // 去掉 markdown 强调符号，避免朗读时读出杂音
+        return match[1].trim().replace(/\*\*/g, '').replace(/[`#]/g, '');
+      }
     }
-    return content; // 兜底：全文播放
+    return content; // 兜底：没有分段结构时播放全文
   };
 
   // ==================== TTS 语音播放（浏览器 SpeechSynthesis，兜底火山 TTS） ====================
@@ -474,38 +491,108 @@ function Chat() {
     setInputValue('');
     setError('');
 
+    // 先插入一个空的 AI 消息占位，流式填充内容
+    const aiMsgId = `ai-${Date.now()}`;
+    const aiMsg = {
+      id: aiMsgId,
+      dbId: null,
+      favoriteId: null,
+      role: 'assistant',
+      content: '',
+      sources: [],
+      isFavorite: false,
+      feedback: null,
+    };
+
     try {
       setLoading(true);
-      const res = await api.post('/ai/chat', {
-        question: text,
-        conversation_id: activeConversationId,
-      });
-
-      const data = res.data || res;
-      const feedbackId = data.id;
-      const aiMsg = {
-        id: feedbackId ? (feedbackId + '_a') : `ai-${Date.now()}`,
-        dbId: feedbackId || null,
-        favoriteId: null,
-        role: 'assistant',
-        content: data.answer || data.reply || data.content || '',
-        sources: data.sources || [],
-        isFavorite: false,
-        feedback: null,
-      };
-
       setMessages((prev) => [...prev, aiMsg]);
 
-      // 自动播放 TTS（只播放"回答的话术"部分）
-      setTimeout(() => playTTS(aiMsg.id, extractSpeechText(aiMsg.content)), 500);
+      const token = localStorage.getItem('token');
+      const resp = await fetch('/api/ai/chat/stream', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ question: text, conversation_id: activeConversationId }),
+      });
 
-      if (!activeConversationId && data.conversation_id) {
-        setActiveConversationId(data.conversation_id);
+      if (!resp.ok) {
+        throw new Error(`请求失败（HTTP ${resp.status}）`);
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let fullContent = '';
+      let feedbackId = null;
+      let convId = activeConversationId;
+      let sources = [];
+      let useMock = false;
+
+      const applyDelta = (delta) => {
+        fullContent += delta;
+        setMessages((prev) => prev.map((m) =>
+          m.id === aiMsgId ? { ...m, content: m.content + delta } : m
+        ));
+      };
+
+      const handlePayload = (payload) => {
+        let data;
+        try { data = JSON.parse(payload); } catch (_) { return; }
+        if (data.delta) applyDelta(data.delta);
+        if (data.id) feedbackId = data.id;
+        if (data.conversation_id) convId = data.conversation_id;
+        if (data.sources) sources = data.sources;
+        if (data.use_mock !== undefined) useMock = !!data.use_mock;
+        if (data.error) throw new Error(data.error);
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const payload = trimmed.slice(5).trim();
+          if (payload) handlePayload(payload);
+        }
+      }
+
+      // 处理残留的最后一个 data 行
+      if (buffer) {
+        const trimmed = buffer.trim();
+        if (trimmed.startsWith('data:')) {
+          const payload = trimmed.slice(5).trim();
+          if (payload) handlePayload(payload);
+        }
+      }
+
+      // 更新消息元数据（dbId、sources、是否降级回复）
+      setMessages((prev) => prev.map((m) =>
+        m.id === aiMsgId ? { ...m, dbId: feedbackId, sources, useMock } : m
+      ));
+
+      if (!activeConversationId && convId) {
+        setActiveConversationId(convId);
         loadConversations();
+      }
+
+      // 自动播放 TTS（只播放"回答的话术"部分）
+      if (fullContent) {
+        setTimeout(() => playTTS(aiMsgId, extractSpeechText(fullContent)), 500);
       }
     } catch (err) {
       const errMsg = err?.message || '发送失败，请重试';
       setError(errMsg);
+      // 若 AI 消息没有内容，移除占位消息
+      setMessages((prev) => prev.filter((m) => !(m.id === aiMsgId && !m.content)));
     } finally {
       setLoading(false);
     }
@@ -549,23 +636,141 @@ function Chat() {
     }
   }, []);
 
+  // 反馈获得积分的提示（3 秒后自动消失）
+  const showPointsToast = (points) => {
+    const pts = Number(points) || 0;
+    if (pts <= 0) return;
+    setPointsToast(pts);
+    setTimeout(() => setPointsToast(null), 3000);
+  };
+
   const handleFeedback = async (messageId, type) => {
     const msg = messages.find(m => m.id === messageId);
     const apiId = msg?.dbId || messageId;
     try {
       setFeedbackLoading((prev) => ({ ...prev, [messageId]: type }));
-      await api.post(`/ai/feedback/${apiId}`, { rating: type });
+      const resp = await api.post(`/ai/feedback/${apiId}`, { rating: type });
+      const earned = resp?.data?.earned_points ?? resp?.earned_points ?? 0;
       setMessages((prev) =>
         prev.map((m) =>
           m.id === messageId ? { ...m, feedback: m.feedback === type ? null : type } : m
         )
       );
       playAnimation(messageId, type);
+      showPointsToast(earned);
     } catch (err) {
       console.error('反馈失败:', err);
       alert('反馈操作失败: ' + (err?.message || '请重试'));
     } finally {
       setFeedbackLoading((prev) => ({ ...prev, [messageId]: null }));
+    }
+  };
+
+  /* ==================== "没用"反馈弹窗 ==================== */
+  const openDislikeModal = (messageId) => {
+    const msg = messages.find(m => m.id === messageId);
+    setDislikeModal({ messageId, dbId: msg?.dbId || messageId });
+    setDislikeReason('');
+  };
+
+  const closeDislikeModal = () => {
+    if (dislikeRecording) stopDislikeRecording();
+    setDislikeModal(null);
+    setDislikeReason('');
+  };
+
+  const submitDislike = async () => {
+    if (!dislikeModal) return;
+    const reason = dislikeReason.trim();
+    if (!reason) { alert('请填写反馈内容'); return; }
+    try {
+      setFeedbackLoading((prev) => ({ ...prev, [dislikeModal.messageId]: 'dislike' }));
+      const resp = await api.post(`/ai/feedback/${dislikeModal.dbId}`, { rating: 'dislike', reason });
+      const earned = resp?.data?.earned_points ?? resp?.earned_points ?? 0;
+      setMessages((prev) =>
+        prev.map((m) => (m.id === dislikeModal.messageId ? { ...m, feedback: 'dislike' } : m))
+      );
+      playAnimation(dislikeModal.messageId, 'dislike');
+      setDislikeModal(null);
+      setDislikeReason('');
+      showPointsToast(earned);
+    } catch (err) {
+      alert('反馈提交失败: ' + (err?.message || '请重试'));
+    } finally {
+      setFeedbackLoading((prev) => ({ ...prev, [dislikeModal.messageId]: null }));
+    }
+  };
+
+  const startDislikeRecording = async () => {
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        const isHTTP = location.protocol === 'http:';
+        alert(isHTTP ? '麦克风需要 HTTPS 安全连接。\n\n请访问 https://pdbd.nanfu.com' : '当前浏览器不支持麦克风功能');
+        return;
+      }
+      let mimeType = 'audio/webm;codecs=opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'audio/webm';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'audio/mp4';
+          if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = '';
+        }
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const opts = mimeType ? { mimeType } : {};
+      const mediaRecorder = new MediaRecorder(stream, opts);
+      dislikeRecorderRef.current = mediaRecorder;
+      dislikeChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) dislikeChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const audioBlob = new Blob(dislikeChunksRef.current, { type: mimeType || 'audio/mp4' });
+        if (audioBlob.size < 200) {
+          alert('录音太短，请重试');
+          return;
+        }
+        const formData = new FormData();
+        formData.append('audio', audioBlob, `feedback.${mimeType.includes('mp4') ? 'mp4' : 'webm'}`);
+        try {
+          setDislikeTranscribing(true);
+          const res = await api.post('/ai/speech-to-text', formData);
+          const data = res.data || res;
+          const text = data?.data?.text || data?.text || '';
+          if (text.trim()) {
+            setDislikeReason(prev => (prev ? prev + ' ' + text.trim() : text.trim()));
+          } else {
+            alert('未识别到语音内容，请重试');
+          }
+        } catch (err) {
+          alert('语音识别失败: ' + (err?.message || '请重试'));
+        } finally {
+          setDislikeTranscribing(false);
+        }
+      };
+
+      mediaRecorder.start();
+      setDislikeRecording(true);
+    } catch (err) {
+      let errMsg;
+      if (err.name === 'NotAllowedError') {
+        errMsg = '请允许麦克风权限后重试';
+      } else if (err.name === 'NotFoundError') {
+        errMsg = '未检测到麦克风设备';
+      } else {
+        errMsg = '无法访问麦克风: ' + (err.message || '请检查浏览器权限');
+      }
+      alert(errMsg);
+    }
+  };
+
+  const stopDislikeRecording = () => {
+    setDislikeRecording(false);
+    if (dislikeRecorderRef.current && dislikeRecorderRef.current.state === 'recording') {
+      dislikeRecorderRef.current.stop();
     }
   };
 
@@ -609,10 +814,7 @@ function Chat() {
 
   const formatTime = (timestamp) => {
     if (!timestamp) return '';
-    return new Date(timestamp).toLocaleTimeString('zh-CN', {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    return formatShanghai(timestamp).slice(11, 16);
   };
 
   /* ========== 过滤 emoji（防止显示为 □□）========== */
@@ -662,6 +864,14 @@ function Chat() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden md:flex-row">
+      {/* 反馈获得积分提示 */}
+      {pointsToast && (
+        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[9999] pointer-events-none">
+          <div className="bg-gradient-to-r from-amber-400 to-orange-400 text-white px-5 py-2.5 rounded-full shadow-lg shadow-amber-200/60">
+            <span className="font-semibold text-sm">反馈成功，+{pointsToast} 积分</span>
+          </div>
+        </div>
+      )}
       {/* ===== 侧边栏：仅桌面端显示 ===== */}
       <aside
         className={`bg-white/80 backdrop-blur-xl border-r border-warm-100/60 flex-col shrink-0 transition-all duration-300 overflow-hidden hidden md:flex ${
@@ -742,7 +952,7 @@ function Chat() {
               <Sparkles size={16} className="text-white" />
             </div>
             <div>
-              <h2 className="font-bold text-sm text-warm-900">智囊小助手</h2>
+              <h2 className="font-bold text-sm text-warm-900">跑店问问</h2>
               <p className="text-[11px] text-warm-400">基于知识库和题库的 AI 智能回答</p>
             </div>
           </div>
@@ -762,7 +972,7 @@ function Chat() {
         <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
           {/* 手机端：对话历史入口 + 新建对话 */}
           <div className="md:hidden flex items-center justify-between mb-3">
-            <span className="text-xs text-warm-400 font-medium">智囊小助手</span>
+            <span className="text-xs text-warm-400 font-medium">跑店问问</span>
             <div className="flex items-center gap-1">
               <button
                 onClick={newConversation}
@@ -840,10 +1050,9 @@ function Chat() {
               <div className="w-12 h-12 md:w-20 md:h-20 bg-gradient-to-br from-sky-400 to-primary-600 rounded-2xl md:rounded-3xl flex items-center justify-center shadow-soft-lg mb-3 md:mb-6">
                 <Sparkles size={22} className="text-white md:size-36" />
               </div>
-              <h3 className="text-base md:text-2xl font-bold text-warm-900 mb-1 md:mb-2">你好，我是智答助手</h3>
-              <p className="text-warm-500 text-xs md:text-sm mb-4 md:mb-8 text-center max-w-md px-2 hidden md:block">
-                我可以帮助你解答关于产品、销售技巧、公司制度等方面的问题。<br />
-                试试下面的问题，或直接输入你想了解的内容。
+              <h3 className="text-base md:text-2xl font-bold text-warm-900 mb-1 md:mb-2">跑店问问</h3>
+              <p className="text-warm-500 text-xs md:text-sm mb-4 md:mb-8 text-center max-w-md px-2">
+                你的销售随身问答助手，业务疑问，一问就懂
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-lg px-2 md:px-0">
                 {suggestions.slice(0, 2).map((item, idx) => {
@@ -899,22 +1108,11 @@ function Chat() {
                       {renderContent(msg.content)}
                     </div>
 
-                    {/* 来源引用 */}
-                    {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {msg.sources.map((source, idx) => (
-                          <span
-                            key={idx}
-                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium ${
-                              source.type === 'question'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
-                                : 'bg-sky-50 text-sky-700 border border-sky-100'
-                            }`}
-                          >
-                            <BookOpen size={11} />
-                            {source.type === 'question' ? '题库' : '知识库'}: {source.title || `引用 ${idx + 1}`}
-                          </span>
-                        ))}
+                    {/* AI 服务异常时的降级提示 */}
+                    {msg.role === 'assistant' && msg.useMock && (
+                      <div className="mt-2 inline-flex items-start gap-1.5 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-[12px] leading-relaxed text-amber-700 max-w-[440px]">
+                        <AlertCircle size={13} className="mt-[1px] shrink-0" />
+                        <span>AI 服务暂时不稳定，以上为知识库检索结果，仅供参考</span>
                       </div>
                     )}
 
@@ -938,27 +1136,27 @@ function Chat() {
                           ) : (
                             <ThumbsUp size={14} className={msg.feedback === 'like' ? 'fill-blue-500 text-blue-500' : ''} />
                           )}
-                          点赞
+                          有帮助
                         </button>
 
-                        {/* 不点赞 */}
+                        {/* 没用 */}
                         <button
                           ref={(el) => { btnRefs.current[`${msg.id}-dislike`] = el; }}
-                          onClick={() => handleFeedback(msg.id, 'dislike')}
+                          onClick={() => openDislikeModal(msg.id)}
                           disabled={!!feedbackLoading[msg.id]}
                           className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all duration-200 active:scale-95 ${
                             msg.feedback === 'dislike'
                               ? 'bg-rose-50 text-rose-600 border-rose-200 shadow-sm'
                               : 'bg-white/80 text-warm-500 border-warm-200 hover:border-rose-300 hover:text-rose-600 hover:bg-rose-50/50'
                           }`}
-                          title="待改进"
+                          title="没帮助"
                         >
                           {feedbackLoading[msg.id] === 'dislike' ? (
                             <Loader2 size={14} className="animate-spin" />
                           ) : (
                             <ThumbsDown size={14} className={msg.feedback === 'dislike' ? 'fill-rose-500 text-rose-500' : ''} />
                           )}
-                          踩
+                          没帮助
                         </button>
 
                         {/* 收藏 */}
@@ -1090,6 +1288,62 @@ function Chat() {
           </p>
         </div>
       </div>
+
+      {/* "没用"反馈弹窗 */}
+      {dislikeModal && createPortal(
+        <div className="fixed inset-0 z-[200] flex items-end md:items-center justify-center bg-black/50" onClick={closeDislikeModal}>
+          <div className="bg-white w-full max-w-md rounded-t-2xl md:rounded-2xl shadow-2xl p-5 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-base font-bold text-warm-900">这个回答没帮助吗？</h3>
+              <button onClick={closeDislikeModal} className="p-1 hover:bg-warm-100 rounded-lg">
+                <X size={18} className="text-warm-400" />
+              </button>
+            </div>
+            <p className="text-xs text-warm-500 mb-3">告诉我们哪里没帮到你，我们会持续改进</p>
+
+            <textarea
+              value={dislikeReason}
+              onChange={(e) => setDislikeReason(e.target.value)}
+              placeholder="请描述问题，比如：答案和我的产品无关、话术不实用……"
+              rows={4}
+              className="input resize-none rounded-xl border-warm-200 focus:border-primary-300 text-sm"
+            />
+
+            <div className="flex items-center gap-2 mt-3">
+              <button
+                onClick={dislikeRecording ? stopDislikeRecording : startDislikeRecording}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border transition ${
+                  dislikeRecording
+                    ? 'bg-rose-500 text-white border-rose-500'
+                    : 'bg-white text-warm-600 border-warm-200 hover:border-primary-300 hover:text-primary-600'
+                }`}
+              >
+                {dislikeTranscribing ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : dislikeRecording ? (
+                  <MicOff size={14} />
+                ) : (
+                  <Mic size={14} />
+                )}
+                {dislikeTranscribing ? '识别中...' : dislikeRecording ? '点击停止' : '语音输入'}
+              </button>
+              {dislikeRecording && <span className="text-xs text-rose-500 animate-pulse">正在聆听...</span>}
+            </div>
+
+            <div className="flex gap-3 mt-5">
+              <button onClick={closeDislikeModal} className="btn-secondary flex-1 text-sm">取消</button>
+              <button
+                onClick={submitDislike}
+                disabled={!dislikeReason.trim() || feedbackLoading[dislikeModal.messageId] === 'dislike'}
+                className="btn-primary flex-1 text-sm disabled:opacity-50"
+              >
+                {feedbackLoading[dislikeModal.messageId] === 'dislike' ? '提交中...' : '提交反馈'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

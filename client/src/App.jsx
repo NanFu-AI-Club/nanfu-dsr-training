@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import AdminLayout from './layouts/AdminLayout';
 import SalesLayout from './layouts/SalesLayout';
@@ -21,6 +21,8 @@ import AdminRadarDimensions from './pages/admin/RadarDimensions';
 import AdminShop from './pages/admin/Shop';
 import AdminSubmissions from './pages/admin/Submissions';
 import AdminShares from './pages/admin/Shares';
+import AdminUserStatistics from './pages/admin/UserStatistics';
+import AdminAnnouncements from './pages/admin/Announcements';
 
 // 业务员页面
 import SalesCheckIn from './pages/sales/CheckIn';
@@ -32,12 +34,31 @@ import SalesStatistics from './pages/sales/Statistics';
 import SalesProfile from './pages/sales/Profile';
 import SalesShop from './pages/sales/Shop';
 import SalesSubmission from './pages/sales/Submission';
+import SalesShares from './pages/sales/Shares';
+import SalesAnnouncements from './pages/sales/Announcements';
+
+const MANAGER_ALLOWED_PATHS = ['', '/users', '/exams', '/training-records', '/submissions', '/shares', '/user-statistics', '/announcements'];
+
+function canUseSalesExperience(user) {
+  return user?.role === 'sales' || ['system_admin', 'region_manager', 'area_manager', 'city_manager'].includes(user?.manager_type);
+}
+
+function isCitySalesOnly(user) {
+  return user?.manager_type === 'city_manager';
+}
 
 function ProtectedRoute({ children, role }) {
   const { user, loading } = useAuth();
+  const location = useLocation();
   if (loading) return <div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" /></div>;
   if (!user) return <Navigate to="/login" />;
-  if (role && user.role !== role) return <Navigate to={user.role === 'admin' ? '/admin' : '/sales'} />;
+  if (role === 'admin' && isCitySalesOnly(user)) return <Navigate to="/sales/chat" replace />;
+  if (role === 'sales' && !canUseSalesExperience(user)) return <Navigate to="/admin" replace />;
+  if (role && user.role !== role && !(role === 'sales' && canUseSalesExperience(user))) return <Navigate to={canUseSalesExperience(user) ? '/sales' : '/admin'} />;
+  if (role === 'admin' && user.manager_type && user.manager_type !== 'system_admin') {
+    const adminPath = location.pathname.replace(/^\/admin/, '').replace(/\/$/, '');
+    if (!MANAGER_ALLOWED_PATHS.includes(adminPath)) return <Navigate to="/admin" replace />;
+  }
   return children;
 }
 
@@ -62,6 +83,8 @@ export default function App() {
         <Route path="logs" element={<AdminLogs />} />
         <Route path="submissions" element={<AdminSubmissions />} />
         <Route path="shares" element={<AdminShares />} />
+        <Route path="user-statistics" element={<AdminUserStatistics />} />
+        <Route path="announcements" element={<AdminAnnouncements />} />
       </Route>
       <Route path="/sales/*" element={<ProtectedRoute role="sales"><SalesLayout /></ProtectedRoute>}>
         <Route index element={<SalesChat />} />
@@ -74,6 +97,8 @@ export default function App() {
         <Route path="profile" element={<SalesProfile />} />
         <Route path="shop" element={<SalesShop />} />
         <Route path="submission" element={<SalesSubmission />} />
+        <Route path="shares" element={<SalesShares />} />
+        <Route path="announcements" element={<SalesAnnouncements />} />
       </Route>
       <Route path="*" element={<Navigate to="/login" />} />
     </Routes>

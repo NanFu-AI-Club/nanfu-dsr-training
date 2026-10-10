@@ -1,14 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Loader2, AlertCircle, User, Calendar, Award, Star, Clock,
   BookOpen, MessageSquare, FileText, ChevronRight, TrendingUp,
   Zap, Shield, Heart, Target, Users, CheckCircle, XCircle,
+  GraduationCap, CalendarDays, Camera, ShoppingBag, BarChart3,
 } from 'lucide-react';
 import {
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
   ResponsiveContainer, Tooltip,
 } from 'recharts';
 import api from '../../api';
+import { formatShanghai, formatDateShanghai } from '../../utils/time';
 
 /* ========== 六维能力配置 ========== */
 const DIMENSION_CONFIG = [
@@ -30,7 +33,7 @@ const DIMENSION_CONFIG = [
     bg: 'bg-emerald-50',
     bar: 'bg-emerald-500',
     description: 'SPIN提问、FAB法则、促成话术等销售技能',
-    scoreSource: '销售类考试平均分 × 30% + 销售课程完成率 × 30% + AI陪练平均分 × 40%',
+    scoreSource: '销售类考试平均分 × 30% + 销售课程完成率 × 30% + FU利陪陪平均分 × 40%',
   },
   {
     key: 'communication',
@@ -40,7 +43,7 @@ const DIMENSION_CONFIG = [
     bg: 'bg-purple-50',
     bar: 'bg-purple-500',
     description: '倾听、表达、共情及非暴力沟通能力',
-    scoreSource: 'AI陪练报告中"沟通表达"维度平均分',
+    scoreSource: 'FU利陪陪报告中"沟通表达"维度平均分',
   },
   {
     key: 'customer_management',
@@ -50,7 +53,7 @@ const DIMENSION_CONFIG = [
     bg: 'bg-orange-50',
     bar: 'bg-orange-500',
     description: '客户分级、跟进节奏与售后处理',
-    scoreSource: 'AI陪练报告中"客户关系"维度平均分',
+    scoreSource: 'FU利陪陪报告中"客户关系"维度平均分',
   },
   {
     key: 'customer_care',
@@ -60,11 +63,11 @@ const DIMENSION_CONFIG = [
     bg: 'bg-rose-50',
     bar: 'bg-rose-500',
     description: '客户关系维护、客情建立与长期合作经营',
-    scoreSource: 'AI陪练报告中"客情维护"维度平均分',
+    scoreSource: 'FU利陪陪报告中"客情维护"维度平均分',
   },
   {
     key: 'learning_attitude',
-    label: '学习时长',
+    label: '学习投入',
     icon: Clock,
     color: 'text-pink-600',
     bg: 'bg-pink-50',
@@ -85,19 +88,29 @@ function getRating(score) {
 /* ========== 活动类型配置 ========== */
 const ACTIVITY_CONFIG = {
   exam: { icon: FileText, label: '考试', color: 'text-orange-500', bg: 'bg-orange-100' },
-  training: { icon: MessageSquare, label: '陪练', color: 'text-purple-500', bg: 'bg-purple-100' },
+  training: { icon: MessageSquare, label: 'FU利陪陪', color: 'text-purple-500', bg: 'bg-purple-100' },
   course: { icon: BookOpen, label: '学习', color: 'text-green-500', bg: 'bg-emerald-100' },
   points: { icon: Award, label: '积分', color: 'text-amber-500', bg: 'bg-amber-100' },
   default: { icon: Clock, label: '其他', color: 'text-warm-500', bg: 'bg-warm-100' },
 };
 
+/* ========== 快捷功能入口（收纳次要功能） ========== */
+const QUICK_ACTIONS = [
+  { path: '/sales/learning', icon: GraduationCap, label: '闯关学习', color: 'text-sky-600', bg: 'bg-sky-50' },
+  { path: '/sales/exam', icon: FileText, label: '答题挑战', color: 'text-violet-600', bg: 'bg-violet-50' },
+  { path: '/sales/checkin', icon: CalendarDays, label: '每日签到', color: 'text-amber-600', bg: 'bg-amber-50' },
+  { path: '/sales/submission', icon: Camera, label: '风采投稿', color: 'text-rose-600', bg: 'bg-rose-50' },
+  { path: '/sales/shop', icon: ShoppingBag, label: '积分商城', color: 'text-emerald-600', bg: 'bg-emerald-50' },
+  { path: '/sales/statistics', icon: BarChart3, label: '成长榜', color: 'text-orange-600', bg: 'bg-orange-50' },
+];
+
 /* ========== 等级/称号配置 ========== */
 const LEVELS = [
-  { level: 1, title: '江湖跑侠', min: 0, max: 199, desc: '初闯终端江湖，开启跑店历练', color: 'text-stone-500', bar: 'bg-stone-400' },
-  { level: 2, title: '拓店游侠', min: 200, max: 499, desc: '奔走各大门店，拓店小有收获', color: 'text-emerald-600', bar: 'bg-emerald-500' },
-  { level: 3, title: '终端先锋', min: 500, max: 999, desc: '熟稔门店谈判，终端得心应手', color: 'text-blue-600', bar: 'bg-blue-500' },
-  { level: 4, title: '销冠大咖', min: 1000, max: 1999, desc: '实战战绩突出，团队中坚力量', color: 'text-purple-600', bar: 'bg-purple-500' },
-  { level: 5, title: '城市英雄', min: 2000, max: Infinity, desc: '一线顶尖标杆，众人学习榜样', color: 'text-amber-500', bar: 'bg-amber-500' },
+  { level: 1, title: '江湖跑侠', min: 0, max: 499, desc: '初闯终端江湖，开启跑店历练', color: 'text-stone-500', bar: 'bg-stone-400' },
+  { level: 2, title: '拓店游侠', min: 500, max: 1499, desc: '奔走各大门店，拓店小有收获', color: 'text-emerald-600', bar: 'bg-emerald-500' },
+  { level: 3, title: '终端先锋', min: 1500, max: 2999, desc: '熟稔门店谈判，终端得心应手', color: 'text-blue-600', bar: 'bg-blue-500' },
+  { level: 4, title: '销冠大咖', min: 3000, max: 4999, desc: '实战战绩突出，团队中坚力量', color: 'text-purple-600', bar: 'bg-purple-500' },
+  { level: 5, title: '销冠王者', min: 5000, max: Infinity, desc: '一线顶尖标杆，众人学习榜样', color: 'text-amber-500', bar: 'bg-amber-500' },
 ];
 
 function getLevelInfo(totalEarnedPoints) {
@@ -111,8 +124,8 @@ function getLevelInfo(totalEarnedPoints) {
 const LEVEL_UP_TEXTS = {
   '1→2': { icon: '🎉', subtitle: '恭喜升级｜解锁称号【拓店游侠】', body: '奔走终端江湖，你的努力已经看见！继续跑店答题攒积分，向着终端先锋进发。' },
   '2→3': { icon: '✨', subtitle: '恭喜升级｜解锁称号【终端先锋】', body: '谈判拓店越来越顺手，一线战场已然独当一面！再接再厉，冲击销冠大咖。' },
-  '3→4': { icon: '🔥', subtitle: '恭喜升级｜解锁称号【销冠大咖】', body: '实力得到认证！你已是一线实战中坚，距离城市英雄仅一步之遥。' },
-  '4→5': { icon: '🏆', subtitle: '重磅升级｜解锁最高称号【城市英雄】', body: '恭喜达成至高荣誉！你是本区域业务标杆，欢迎多多投稿实战视频，带动全体伙伴共同成长。' },
+  '3→4': { icon: '🔥', subtitle: '恭喜升级｜解锁称号【销冠大咖】', body: '实力得到认证！你已是一线实战中坚，距离销冠王者仅一步之遥。' },
+  '4→5': { icon: '🏆', subtitle: '重磅升级｜解锁最高称号【销冠王者】', body: '恭喜达成至高荣誉！你是本区域业务标杆，欢迎多多投稿实战视频，带动全体伙伴共同成长。' },
 };
 
 /* 雷达图 tooltip */
@@ -127,6 +140,7 @@ function RadarTooltip({ active, payload }) {
 }
 
 export default function Profile() {
+  const navigate = useNavigate();
   const [radarData, setRadarData] = useState(null);
   const [overview, setOverview] = useState(null);
   const [activities, setActivities] = useState([]);
@@ -136,6 +150,8 @@ export default function Profile() {
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [error, setError] = useState('');
   const [levelUpPopup, setLevelUpPopup] = useState(null);
+  // null 表示尚未加载完成（升级弹窗需等它就绪后再判断，避免漏显加成）
+  const [levelBonuses, setLevelBonuses] = useState(null);
 
   /* ---- 从 localStorage 获取当前用户 ---- */
   const currentUser = (() => {
@@ -214,11 +230,24 @@ export default function Profile() {
   useEffect(() => {
     loadRadar();
     loadOverview();
+    (async () => {
+      try {
+        const res = await api.get('/statistics/level-bonuses');
+        const rows = res?.data || res || [];
+        const map = {};
+        rows.forEach((r) => {
+          if (Number(r.enabled) === 1) map[r.level] = Number(r.multiplier);
+        });
+        setLevelBonuses(map);
+      } catch (_) {
+        setLevelBonuses({}); // 拿不到配置时不影响升级弹窗其它内容
+      }
+    })();
   }, [loadRadar, loadOverview]);
 
   /* ---- 等级升级检测 ---- */
   useEffect(() => {
-    if (!overview?.level) return;
+    if (!overview?.level || levelBonuses === null) return;
     const currentLevel = overview.level.level;
     const lastSeen = localStorage.getItem('last_seen_level');
 
@@ -233,11 +262,17 @@ export default function Profile() {
       const fromTo = `${lastSeenNum}→${currentLevel}`;
       const texts = LEVEL_UP_TEXTS[fromTo];
       if (texts) {
-        setLevelUpPopup({ ...texts, newLevel: currentLevel, newTitle: overview.level.title });
+        const bonus = levelBonuses[currentLevel];
+        setLevelUpPopup({
+          ...texts,
+          newLevel: currentLevel,
+          newTitle: overview.level.title,
+          bonus: bonus && bonus > 1 ? bonus : null,
+        });
       }
       localStorage.setItem('last_seen_level', String(currentLevel));
     }
-  }, [overview]);
+  }, [overview, levelBonuses]);
 
   /* ---- 雷达图数据 ---- */
   const chartData = dimensions.map((d) => ({
@@ -252,6 +287,22 @@ export default function Profile() {
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-y-auto space-y-6">
       <h2 className="page-title">我的画像</h2>
+
+      {/* 快捷功能入口 */}
+      <div className="grid grid-cols-3 gap-3">
+        {QUICK_ACTIONS.map(({ path, icon: Icon, label, color, bg }) => (
+          <button
+            key={path}
+            onClick={() => navigate(path)}
+            className="card flex flex-col items-center justify-center gap-2 py-4 hover:-translate-y-0.5 transition"
+          >
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${bg}`}>
+              <Icon size={20} className={color} />
+            </div>
+            <span className="text-xs text-warm-700 font-medium">{label}</span>
+          </button>
+        ))}
+      </div>
 
       {/* 错误提示 */}
       {error && (
@@ -275,8 +326,11 @@ export default function Profile() {
               <User size={32} className="text-primary-600" />
             </div>
             <div className="flex-1 min-w-0">
-              <h3 className="text-xl font-bold text-warm-900">
-                {currentUser.name || currentUser.username || '业务员'}
+              <h3 className="text-xl font-bold text-warm-900 flex flex-wrap items-baseline gap-x-2">
+                <span>{currentUser.real_name || currentUser.name || currentUser.username || '业务员'}</span>
+                {(currentUser.real_name || currentUser.name) && currentUser.username && (
+                  <span className="text-sm font-normal text-warm-400">{currentUser.username}</span>
+                )}
               </h3>
               <div className="flex flex-wrap items-center gap-3 mt-1 text-sm text-warm-500">
                 <span className="flex items-center gap-1">
@@ -286,7 +340,7 @@ export default function Profile() {
                 {overview?.joined_at && (
                   <span className="flex items-center gap-1">
                     <Calendar size={14} />
-                    加入 {new Date(overview.joined_at).toLocaleDateString('zh-CN')}
+                    加入 {formatDateShanghai(overview.joined_at)}
                   </span>
                 )}
               </div>
@@ -504,7 +558,7 @@ export default function Profile() {
                       </span>
                       {activity.created_at && (
                         <span>
-                          {new Date(activity.created_at).toLocaleString('zh-CN')}
+                          {formatShanghai(activity.created_at)}
                         </span>
                       )}
                     </div>
@@ -534,7 +588,18 @@ export default function Profile() {
           <div className="bg-white rounded-2xl shadow-soft-xl p-6 w-full max-w-sm text-center" onClick={(e) => e.stopPropagation()}>
             <div className="text-5xl mb-3">{levelUpPopup.icon}</div>
             <h3 className="text-lg font-bold text-warm-900 mb-2">{levelUpPopup.subtitle}</h3>
-            <p className="text-sm text-warm-500 leading-relaxed mb-5">{levelUpPopup.body}</p>
+            <p className="text-sm text-warm-500 leading-relaxed mb-4">{levelUpPopup.body}</p>
+
+            {levelUpPopup.bonus && (
+              <div className="mb-5 p-3.5 rounded-xl bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200">
+                <p className="text-sm font-semibold text-amber-700">解锁等级加成权益</p>
+                <p className="text-xs text-amber-600 mt-1.5 leading-relaxed">
+                  从此刻起，你获得的所有积分按{' '}
+                  <span className="font-bold text-base">×{levelUpPopup.bonus}</span> 计算
+                </p>
+              </div>
+            )}
+
             <button
               onClick={() => setLevelUpPopup(null)}
               className="btn-primary w-full"

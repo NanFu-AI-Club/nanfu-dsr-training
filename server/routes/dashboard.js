@@ -4,9 +4,12 @@
  *     training_sessions, training_reports, point_logs, activity_logs, groups
  */
 const express = require('express');
+const { todayShanghai, dateDaysAgoShanghai } = require('../utils/time');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
-const { authRequired } = require('../middleware/auth');
+const { authRequired, getOrgUserScope } = require('../middleware/auth');
+const { getLevelInfo } = require('../utils/levels');
+const { NOISY_ACTIONS, normalizeLog } = require('../utils/logFormatter');
 
 // ==================== 辅助函数 ====================
 
@@ -21,19 +24,20 @@ router.get('/overview', authRequired, (req, res) => {
   try {
     const db = req.db;
     const admin = isAdmin(req);
+    const scope = getOrgUserScope(db, req.user, 'u');
 
     // 基础数据（所有登录用户可见）
     const data = {};
 
     if (admin) {
       // 总用户数
-      data.total_users = db.prepare("SELECT COUNT(*) as count FROM users WHERE status = 'active'").get().count;
+      data.total_users = db.prepare(`SELECT COUNT(*) as count FROM users u WHERE u.status = 'active' AND ${scope.clause}`).get(...scope.params).count;
 
       // 活跃用户数（近30天有学习记录）
       data.active_users = db.prepare(`
-        SELECT COUNT(DISTINCT user_id) as count FROM activity_logs
-        WHERE created_at >= datetime('now', '-30 days', 'localtime')
-      `).get().count;
+        SELECT COUNT(DISTINCT al.user_id) as count FROM activity_logs al JOIN users u ON al.user_id = u.id
+        WHERE ${scope.clause} AND al.created_at >= datetime('now', '-30 days', 'localtime')
+      `).get(...scope.params).count;
 
       // 本月新增用户
       data.new_users_this_month = db.prepare(`
@@ -80,8 +84,8 @@ router.get('/overview', authRequired, (req, res) => {
 
     // 总陪练次数
     const trainingRow = db.prepare(`
-      SELECT COUNT(*) as count FROM training_sessions
-    `).get();
+      SELECT COUNT(*) as count FROM training_sessions ts JOIN users u ON ts.user_id = u.id WHERE ${scope.clause}
+    `).get(...scope.params);
     data.total_trainings = trainingRow ? trainingRow.count : 0;
 
     // 变化趋势
@@ -105,25 +109,33 @@ router.get('/overview', authRequired, (req, res) => {
 
 // ==================== 积分排行榜 ====================
 
-// GET /rankings - 积分排行榜 top 20
+// GET /rankings - 积分排行榜 top 20（按累计获得积分排序，不受兑换影响）
 router.get('/rankings', authRequired, (req, res) => {
   try {
     const db = req.db;
 
+    const scope = getOrgUserScope(db, req.user, 'u');
     const rankings = db.prepare(`
-      SELECT u.id, u.real_name, u.avatar, u.points, u.group_id,
+      SELECT u.id, u.real_name, u.avatar, u.total_earned_points, u.points, u.group_id,
              g.name as group_name
       FROM users u
       LEFT JOIN groups g ON u.group_id = g.id
-      WHERE u.status = 'active'
-      ORDER BY u.points DESC
+      WHERE u.status = 'active' AND ${scope.clause}
+      ORDER BY u.total_earned_points DESC
       LIMIT 20
-    `).all();
+    `).all(...scope.params);
 
-    const list = rankings.map((item, index) => ({
-      ...item,
-      rank: index + 1
-    }));
+    const list = rankings.map((item, index) => {
+      const lv = getLevelInfo(item.total_earned_points);
+      return {
+        ...item,
+        rank: index + 1,
+        // 排行榜展示累计获得积分，不受兑换影响
+        points: item.total_earned_points,
+        level: lv.level,
+        title: lv.title,
+      };
+    });
 
     res.json({ code: 0, data: { list } });
   } catch (err) {
@@ -138,14 +150,16 @@ router.get('/rankings', authRequired, (req, res) => {
 router.get('/learning-activity', authRequired, (req, res) => {
   try {
     const db = req.db;
+    const scope = getOrgUserScope(db, req.user, 'u');
 
     const activityData = db.prepare(`
       SELECT date(al.created_at) as date, COUNT(DISTINCT al.user_id) as count
       FROM activity_logs al
-      WHERE al.created_at >= datetime('now', '-30 days', 'localtime')
+      JOIN users u ON al.user_id = u.id
+      WHERE ${scope.clause} AND al.created_at >= datetime('now', '-30 days', 'localtime')
       GROUP BY date
       ORDER BY date ASC
-    `).all();
+    `).all(...scope.params);
 
     // 补全30天
     const result = [];
@@ -154,11 +168,8 @@ router.get('/learning-activity', authRequired, (req, res) => {
       activityMap[item.date] = item.count;
     }
 
-    const now = new Date();
     for (let i = 29; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
+      const dateStr = dateDaysAgoShanghai(i);
       result.push({
         date: dateStr,
         count: activityMap[dateStr] || 0
@@ -178,6 +189,7 @@ router.get('/learning-activity', authRequired, (req, res) => {
 router.get('/exam-stats', authRequired, (req, res) => {
   try {
     const db = req.db;
+    const scope = getOrgUserScope(db, req.user, 'u');
 
     // 总考试次数
     const overview = db.prepare(`
@@ -185,8 +197,9 @@ router.get('/exam-stats', authRequired, (req, res) => {
              SUM(CASE WHEN er.passed = 1 THEN 1 ELSE 0 END) as passed,
              ROUND(AVG(er.score), 1) as avg_score
       FROM exam_records er
-      WHERE er.status IN ('submitted', 'graded')
-    `).get();
+      JOIN users u ON er.user_id = u.id
+      WHERE er.status IN ('submitted', 'graded') AND ${scope.clause}
+    `).get(...scope.params);
 
     // 各考试参与人数
     const examDetails = db.prepare(`
@@ -197,10 +210,11 @@ router.get('/exam-stats', authRequired, (req, res) => {
              SUM(CASE WHEN er.passed = 1 THEN 1 ELSE 0 END) as passed_count
       FROM exams e
       LEFT JOIN exam_records er ON e.id = er.exam_id AND er.status IN ('submitted', 'graded')
-      WHERE e.status = 'published'
+      LEFT JOIN users u ON er.user_id = u.id
+      WHERE e.status = 'published' AND (${scope.clause} OR er.user_id IS NULL)
       GROUP BY e.id
       ORDER BY participant_count DESC
-    `).all();
+    `).all(...scope.params);
 
     res.json({
       code: 0,
@@ -224,16 +238,18 @@ router.get('/popular-courses', authRequired, (req, res) => {
   try {
     const db = req.db;
 
+    const scope = getOrgUserScope(db, req.user, 'u');
     const courses = db.prepare(`
       SELECT c.id, c.title, c.title as name, c.cover_url as cover, c.category, c.type as difficulty,
              COUNT(DISTINCT lp.user_id) as exam_count
       FROM courses c
       LEFT JOIN learning_progress lp ON c.id = lp.course_id
-      WHERE c.status = 'published'
+      LEFT JOIN users u ON lp.user_id = u.id
+      WHERE c.status = 'published' AND (${scope.clause} OR lp.user_id IS NULL)
       GROUP BY c.id
       ORDER BY exam_count DESC
       LIMIT 10
-    `).all();
+    `).all(...scope.params);
 
     const list = courses.map((item, index) => ({
       ...item,
@@ -253,21 +269,25 @@ router.get('/popular-courses', authRequired, (req, res) => {
 router.get('/recent-activities', authRequired, (req, res) => {
   try {
     const db = req.db;
+    const scope = getOrgUserScope(db, req.user, 'u');
+
+    // 默认过滤掉高频噪声（学习进度），需要可在 query 加 include_noisy=1
+    const includeNoisy = req.query.include_noisy === '1' || req.query.include_noisy === 'true';
+    const noisyClause = includeNoisy ? '' : `AND (al.action IS NULL OR al.action NOT IN (${Array.from(NOISY_ACTIONS).map(() => '?').join(',')}))`;
+    const noisyParams = includeNoisy ? [] : Array.from(NOISY_ACTIONS);
 
     const activities = db.prepare(`
       SELECT al.id, al.user_id, al.action, al.module, al.target_type,
              al.target_id, al.detail, al.ip, al.created_at,
-             u.real_name as user_name, u.avatar as operator_avatar
+             u.real_name as user_name, u.username, u.avatar as operator_avatar
       FROM activity_logs al
       LEFT JOIN users u ON al.user_id = u.id
+      WHERE ${scope.clause} ${noisyClause}
       ORDER BY al.created_at DESC
       LIMIT 20
-    `).all();
+    `).all(...scope.params, ...noisyParams);
 
-    const list = activities.map(a => ({
-      ...a,
-      detail: (() => { try { return JSON.parse(a.detail || '{}'); } catch (_) { return a.detail; } })()
-    }));
+    const list = activities.map(normalizeLog);
 
     res.json({ code: 0, data: { list } });
   } catch (err) {

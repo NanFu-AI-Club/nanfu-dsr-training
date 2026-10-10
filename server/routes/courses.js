@@ -7,7 +7,8 @@ const { v4: uuidv4 } = require('uuid');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { authRequired, adminRequired } = require('../middleware/auth');
+const { authRequired, adminRequired, isSalesExperienceUser } = require('../middleware/auth');
+const { applyLevelBonus } = require('../utils/points');
 
 // 课程文件上传目录
 const uploadDir = path.join(__dirname, '..', 'uploads', 'courses');
@@ -108,7 +109,9 @@ router.get('/', authRequired, (req, res) => {
       conditions.push('(c.title LIKE ? OR c.description LIKE ? OR c.tags LIKE ?)');
       params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
     }
-    if (status) {
+    if (isSalesExperienceUser(req.user)) {
+      conditions.push("c.status = 'published'");
+    } else if (status) {
       conditions.push('c.status = ?');
       params.push(status);
     }
@@ -120,7 +123,23 @@ router.get('/', authRequired, (req, res) => {
     `).get(...params).count;
 
     const courses = db.prepare(`
-      SELECT c.*, u.real_name as creator_name
+      SELECT c.*, u.real_name as creator_name,
+        (SELECT COUNT(DISTINCT lp.user_id)
+         FROM learning_progress lp
+         JOIN users lu ON lu.id = lp.user_id AND lu.role = 'sales'
+         WHERE lp.course_id = c.id) AS learner_count,
+        (SELECT COUNT(DISTINCT lp.user_id)
+         FROM learning_progress lp
+         JOIN users lu ON lu.id = lp.user_id AND lu.role = 'sales'
+         WHERE lp.course_id = c.id AND lp.completed = 1) AS completed_count,
+        (SELECT COALESCE(SUM(lp.watch_time), 0)
+         FROM learning_progress lp
+         JOIN users lu ON lu.id = lp.user_id AND lu.role = 'sales'
+         WHERE lp.course_id = c.id) AS total_watch_time,
+        (SELECT COALESCE(SUM(lp.learn_count), 0)
+         FROM learning_progress lp
+         JOIN users lu ON lu.id = lp.user_id AND lu.role = 'sales'
+         WHERE lp.course_id = c.id) AS learn_count
       FROM courses c
       LEFT JOIN users u ON c.created_by = u.id
       WHERE ${whereClause}
@@ -484,7 +503,7 @@ router.get('/:id', authRequired, (req, res) => {
       SELECT c.*, u.real_name as creator_name
       FROM courses c
       LEFT JOIN users u ON c.created_by = u.id
-      WHERE c.id = ?
+      WHERE c.id = ? ${isSalesExperienceUser(req.user) ? "AND c.status = 'published'" : ''}
     `).get(id);
 
     if (!course) {
@@ -640,40 +659,80 @@ router.post('/:id/progress', authRequired, (req, res) => {
     }
 
     const parsedProgress = progress !== undefined ? parseFloat(progress) : 0;
-    const parsedWatchTime = watch_time !== undefined ? parseInt(watch_time) : 0;
+    const existing = db.prepare(
+      'SELECT * FROM learning_progress WHERE user_id = ? AND course_id = ?'
+    ).get(userId, id);
+    const parsedWatchTime = watch_time !== undefined
+      ? Math.max(0, parseInt(watch_time) || 0)
+      : (existing?.watch_time || 0);
 
     if (parsedProgress < 0 || parsedProgress > 100) {
       return res.status(400).json({ code: 400, message: '进度值必须在 0-100 之间' });
     }
 
-    const isCompleted = parsedProgress >= 100;
-    const existing = db.prepare(
-      'SELECT * FROM learning_progress WHERE user_id = ? AND course_id = ?'
-    ).get(userId, id);
+    // 销冠闯关秘籍等课程一旦 completed=1 即锁定，后续再看不再回退进度，避免管理后台统计被污染
+    if (existing && existing.completed === 1) {
+      return res.json({
+        code: 0,
+        message: '课程已完成，进度已锁定',
+        data: {
+          course_id: id,
+          progress: existing.progress,
+          watch_time: existing.watch_time,
+          completed: true,
+          learn_count: existing.learn_count || 0
+        }
+      });
+    }
+
+    // 单调递增保护：已记录的进度不能被新一次从 0 开始的播放覆盖
+    // 当 existing.progress > 0 且 新进度明显回退时，视为"重复观看"：
+    //   - 保留原 progress（不回退）
+    //   - learn_count + 1（记一次新的学习）
+    //   - watch_time 取较大值（不让累计观看时长缩水）
+    let finalProgress = parsedProgress;
+    let finalWatchTime = parsedWatchTime;
+    let isReplay = false;
+    if (existing && existing.progress > 0) {
+      // 允许 2% 的容差，避免视频正常跳转时误判
+      if (parsedProgress + 2 < existing.progress) {
+        isReplay = true;
+        finalProgress = existing.progress;
+        finalWatchTime = Math.max(existing.watch_time || 0, parsedWatchTime);
+      } else {
+        finalProgress = Math.max(parsedProgress, existing.progress);
+        finalWatchTime = Math.max(existing.watch_time || 0, parsedWatchTime);
+      }
+    }
+
+    const isCompleted = finalProgress >= 100;
 
     if (existing) {
+      const newLearnCount = isReplay ? (existing.learn_count || 0) + 1 : (existing.learn_count || 0);
       db.prepare(`
         UPDATE learning_progress
         SET progress = ?, watch_time = ?, completed = ?,
             completed_at = CASE WHEN ? = 1 AND completed = 0 THEN datetime('now','localtime') ELSE completed_at END,
-            updated_at = datetime('now','localtime')
+            updated_at = datetime('now','localtime'),
+            learn_count = ?
         WHERE user_id = ? AND course_id = ?
-      `).run(parsedProgress, parsedWatchTime, isCompleted ? 1 : 0, isCompleted ? 1 : 0, userId, id);
+      `).run(finalProgress, finalWatchTime, isCompleted ? 1 : 0, isCompleted ? 1 : 0, newLearnCount, userId, id);
     } else {
       db.prepare(`
-        INSERT INTO learning_progress (id, user_id, course_id, progress, watch_time, completed, started_at)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime'))
-      `).run(uuidv4(), userId, id, parsedProgress, parsedWatchTime, isCompleted ? 1 : 0);
+        INSERT INTO learning_progress (id, user_id, course_id, progress, watch_time, completed, started_at, learn_count)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime'), 1)
+      `).run(uuidv4(), userId, id, finalProgress, finalWatchTime, isCompleted ? 1 : 0);
     }
 
+    const wasAlreadyCompleted = existing && existing.completed === 1;
     if (isCompleted) {
-      const wasAlreadyCompleted = existing && existing.completed === 1;
       if (!wasAlreadyCompleted) {
         const alreadyAwarded = db.prepare(
           `SELECT id FROM point_logs WHERE user_id = ? AND source_type = 'learning' AND source_id = ?`
         ).get(userId, id);
         if (!alreadyAwarded) {
-          const earnedPoints = Math.max(5, Math.floor(course.duration / 5));
+          const basePoints = Math.max(5, Math.floor(course.duration / 5));
+          const { awarded: earnedPoints } = applyLevelBonus(db, userId, basePoints);
           const pointLogId = uuidv4();
 
           db.prepare(`
@@ -686,16 +745,57 @@ router.post('/:id/progress', authRequired, (req, res) => {
       }
     }
 
-    logActivity(db, userId, 'update_progress', 'course', id, { course_title: course.title, progress: parsedProgress, completed: isCompleted, watch_time: parsedWatchTime }, req.ip);
+    if (isCompleted && !wasAlreadyCompleted) {
+      logActivity(db, userId, 'complete', 'course', id, {
+        course_title: course.title,
+        watch_time: parsedWatchTime
+      }, req.ip);
+    } else if (isReplay) {
+      // 重复观看时记录一条"重看"日志（10 分钟去重，避免短时间反复刷）
+      const recentReplayLog = db.prepare(`
+        SELECT id FROM activity_logs
+        WHERE user_id = ? AND module = 'courses' AND action = 'learn' AND target_id = ?
+          AND created_at >= datetime('now', '-10 minutes')
+        LIMIT 1
+      `).get(userId, id);
+      if (!recentReplayLog) {
+        logActivity(db, userId, 'learn', 'course', id, {
+          course_title: course.title,
+          progress: finalProgress,
+          watch_time: finalWatchTime,
+          replay: true
+        }, req.ip);
+      }
+    } else if (!isCompleted) {
+      const recentLearningLog = db.prepare(`
+        SELECT id FROM activity_logs
+        WHERE user_id = ? AND module = 'courses' AND action = 'learn' AND target_id = ?
+          AND created_at >= datetime('now', '-10 minutes')
+        LIMIT 1
+      `).get(userId, id);
+      if (!recentLearningLog) {
+        logActivity(db, userId, 'learn', 'course', id, {
+          course_title: course.title,
+          progress: finalProgress,
+          watch_time: finalWatchTime
+        }, req.ip);
+      }
+    }
+
+    // 读回最新 learn_count（包含本次 +1）
+    const updated = db.prepare(
+      'SELECT learn_count, progress, watch_time, completed FROM learning_progress WHERE user_id = ? AND course_id = ?'
+    ).get(userId, id);
 
     res.json({
       code: 0,
-      message: isCompleted ? '课程已完成' : '学习进度已更新',
+      message: isCompleted ? '课程已完成' : (isReplay ? '已记录为重复观看，进度保留' : '学习进度已更新'),
       data: {
         course_id: id,
-        progress: parsedProgress,
-        watch_time: parsedWatchTime,
-        completed: isCompleted
+        progress: updated ? updated.progress : finalProgress,
+        watch_time: updated ? updated.watch_time : finalWatchTime,
+        completed: updated ? !!updated.completed : isCompleted,
+        learn_count: updated ? (updated.learn_count || 0) : 1
       }
     });
   } catch (err) {

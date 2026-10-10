@@ -1,8 +1,9 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: '/api',
-  timeout: 30000,
+  // Web 端走 Nginx 反代用相对路径 /api；Capacitor App 构建时通过 VITE_API_BASE 指定绝对地址
+  baseURL: import.meta.env.VITE_API_BASE || '/api',
+  timeout: 90000,
 });
 
 // 请求拦截器：自动附带 Token

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Loader2, CheckCircle, XCircle, Eye, Clock, Search, ChevronLeft, ChevronRight, Trash2, Image, Video, Link, ExternalLink, Briefcase, TrendingUp, ShieldAlert, Users, MoreHorizontal, MonitorSmartphone } from 'lucide-react';
 import api from '../../api';
+import { useAuth } from '../../contexts/AuthContext';
+import { formatShanghai, formatDateShanghai } from '../../utils/time';
 
 const CATEGORIES = [
   { key: 'sales_negotiation', label: '进货谈单实战', desc: '谈卖进、应对老板拒绝', icon: Briefcase, color: 'from-amber-50 to-orange-50 border-amber-200 hover:border-amber-300', activeColor: 'border-amber-500 bg-amber-50', iconBg: 'bg-amber-100 text-amber-700', badge: 'bg-amber-100 text-amber-700' },
@@ -20,6 +22,9 @@ const STATUS_MAP = {
 };
 
 export default function Submissions() {
+  const { user } = useAuth();
+  // 区域经理仅可查看，无审核权限
+  const canReview = user?.manager_type !== 'area_manager';
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -226,7 +231,7 @@ export default function Submissions() {
                     <div className="flex items-center justify-between mt-2">
                       <span className="text-xs text-warm-500">{item.real_name || item.username || '-'}</span>
                       <span className="text-xs text-warm-400">
-                        {item.created_at ? new Date(item.created_at).toLocaleDateString('zh-CN') : ''}
+                        {item.created_at ? formatDateShanghai(item.created_at) : ''}
                       </span>
                     </div>
                     {item.status === 'rejected' && item.review_comment && (
@@ -236,7 +241,7 @@ export default function Submissions() {
                       <button onClick={() => setPreviewItem(item)} className="btn-ghost text-xs flex items-center gap-1">
                         <Eye className="w-3 h-3" />查看
                       </button>
-                      {item.status === 'pending' && (
+                      {canReview && item.status === 'pending' && (
                         <button
                           onClick={() => { setReviewingItem(item); setReviewComment(''); }}
                           className="btn-primary text-xs flex items-center gap-1"
@@ -244,7 +249,7 @@ export default function Submissions() {
                           <CheckCircle className="w-3 h-3" />审核
                         </button>
                       )}
-                      {item.status !== 'pending' && (
+                      {canReview && item.status !== 'pending' && (
                         <button
                           onClick={() => { setReviewingItem(item); setReviewComment(item.review_comment || ''); }}
                           className="btn-ghost text-xs"
@@ -279,19 +284,19 @@ export default function Submissions() {
       {/* 预览弹窗 */}
       {previewItem && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => setPreviewItem(null)}>
-          <div className="max-w-3xl w-full max-h-[90vh] bg-white rounded-xl overflow-hidden" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-4 border-b border-warm-100">
+          <div className="max-w-3xl w-full max-h-[90vh] bg-white rounded-xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-warm-100 shrink-0">
               <div>
                 <h3 className="font-semibold text-warm-900">{previewItem.title}</h3>
                 <p className="text-xs text-warm-400">
-                  {previewItem.real_name || previewItem.username} · {previewItem.created_at ? new Date(previewItem.created_at).toLocaleString('zh-CN') : ''}
+                  {previewItem.real_name || previewItem.username} · {previewItem.created_at ? formatShanghai(previewItem.created_at) : ''}
                 </p>
               </div>
               <button onClick={() => setPreviewItem(null)}
                 className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-warm-100 text-warm-500"
               >✕</button>
             </div>
-            <div className="overflow-auto max-h-[70vh]">
+            <div className="overflow-y-auto flex-1 min-h-0">
               {previewItem.type === 'link' ? (
                 <div className="flex flex-col items-center justify-center py-16 px-4 bg-gradient-to-br from-blue-50 to-indigo-50">
                   <Link className="w-16 h-16 text-blue-400 mb-4" />
@@ -308,10 +313,10 @@ export default function Submissions() {
               ) : (
                 <img src={previewItem.file_url} alt={previewItem.title} className="w-full" />
               )}
+              {previewItem.description && (
+                <p className="p-4 text-sm text-warm-600 border-t border-warm-100 whitespace-pre-wrap">{previewItem.description}</p>
+              )}
             </div>
-            {previewItem.description && (
-              <p className="p-4 text-sm text-warm-600 border-t border-warm-100">{previewItem.description}</p>
-            )}
           </div>
         </div>
       )}

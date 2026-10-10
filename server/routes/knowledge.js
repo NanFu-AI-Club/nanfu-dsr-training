@@ -1,6 +1,8 @@
 const express = require('express');
+const { formatShanghai, dateFilename, nowShanghaiString } = require('../utils/time');
 const { v4: uuidv4 } = require('uuid');
 const { authRequired, adminRequired } = require('../middleware/auth');
+const { clearDocVectorCache } = require('../services/siliconflow_embedding');
 
 function csvEscape(val) {
   const s = String(val || '').replace(/"/g, '""');
@@ -12,12 +14,22 @@ function csvEscape(val) {
  */
 function logActivity(db, userId, action, targetType, targetId, detail, module = 'knowledge', ip = null) {
   const id = uuidv4();
-  const now = new Date().toISOString();
+  const now = nowShanghaiString();
   const detailStr = detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : null;
   db.prepare(
     `INSERT INTO activity_logs (id, user_id, action, module, target_type, target_id, detail, ip, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(id, userId, action, module, targetType, targetId, detailStr, ip, now);
+}
+
+/**
+ * 文档内容变化后，删除其向量并清空缓存，下次检索时重新向量化
+ */
+function invalidateDocVector(db, docId) {
+  try {
+    db.prepare('DELETE FROM kb_document_vectors WHERE doc_id = ?').run(docId);
+    clearDocVectorCache();
+  } catch (_) { /* 向量表不存在或加载失败时忽略 */ }
 }
 
 // ============================================================
@@ -57,7 +69,7 @@ function createCategory(req, res) {
   }
 
   const id = uuidv4();
-  const now = new Date().toISOString();
+  const now = nowShanghaiString();
 
   db.prepare(
     `INSERT INTO kb_categories (id, name, sort_order, created_at)
@@ -92,7 +104,7 @@ function updateCategory(req, res) {
     }
   }
 
-  const now = new Date().toISOString();
+  const now = nowShanghaiString();
   db.prepare(
     `UPDATE kb_categories SET name = ?, sort_order = ? WHERE id = ?`
   ).run(
@@ -229,7 +241,7 @@ function createDocument(req, res) {
   }
 
   const id = uuidv4();
-  const now = new Date().toISOString();
+  const now = nowShanghaiString();
   const version = 1;
 
   // 插入文档
@@ -273,7 +285,7 @@ function updateDocument(req, res) {
     return res.status(400).json({ code: 400, message: '文档不存在' });
   }
 
-  const now = new Date().toISOString();
+  const now = nowShanghaiString();
   const newVersion = existing.version + 1;
   const newTitle = title !== undefined ? title : existing.title;
   const newContent = content !== undefined ? content : existing.content;
@@ -283,6 +295,9 @@ function updateDocument(req, res) {
   db.prepare(
     `UPDATE kb_documents SET title = ?, content = ?, category_id = ?, version = ?, updated_at = ? WHERE id = ?`
   ).run(newTitle, newContent, newCategoryId, newVersion, now, id);
+
+  // 文档内容已变化，删除旧向量，下次检索时重新向量化
+  invalidateDocVector(db, id);
 
   // 插入新版本记录
   const versionId = uuidv4();
@@ -321,6 +336,9 @@ function deleteDocument(req, res) {
   // 删除文档及其所有版本
   db.prepare('DELETE FROM kb_versions WHERE document_id = ?').run(id);
   db.prepare('DELETE FROM kb_documents WHERE id = ?').run(id);
+
+  // 删除对应向量
+  invalidateDocVector(db, id);
 
   logActivity(db, req.user.id, 'delete', 'kb_document', id,
     `删除知识库文档：${existing.title}`);
@@ -376,7 +394,7 @@ function rollbackDocument(req, res) {
     return res.status(400).json({ code: 400, message: '目标版本不存在' });
   }
 
-  const now = new Date().toISOString();
+  const now = nowShanghaiString();
   const newVersion = doc.version + 1;
 
   // 更新文档为回滚版本的内容（仅内容回滚，标题和分类保持不变）
@@ -392,6 +410,9 @@ function rollbackDocument(req, res) {
      SET content = ?, updated_at = ?
      WHERE id = ?`
   ).run(targetVersion.content, now, id);
+
+  // 内容已回滚，删除旧向量，下次检索时重新向量化
+  invalidateDocVector(db, id);
 
   // 插入新版本记录（记录回滚操作）
   const newVersionId = uuidv4();
@@ -611,7 +632,7 @@ router.get('/feedbacks/export', adminRequired, (req, res) => {
     const csvRows = [header.join(',')];
     for (const r of rows) {
       const ratingLabel = r.rating === 'like' ? '满意' : r.rating === 'dislike' ? '不满意' : '无评分';
-      const time = r.created_at ? new Date(r.created_at).toLocaleString('zh-CN') : '';
+      const time = formatShanghai(r.created_at);
       csvRows.push([
         csvEscape(r.user_name || r.username || '-'),
         csvEscape(r.doc_title || '-'),
@@ -622,7 +643,7 @@ router.get('/feedbacks/export', adminRequired, (req, res) => {
       ].join(','));
     }
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename=feedbacks_${new Date().toISOString().split('T')[0]}.csv`);
+    res.setHeader('Content-Disposition', `attachment; filename=feedbacks_${dateFilename()}.csv`);
     res.send('\uFEFF' + csvRows.join('\n'));
   } catch (err) {
     console.error('[feedbacks/export] Error:', err);
@@ -731,7 +752,7 @@ router.post('/import-excel', authRequired, adminRequired, uploadExcel.single('fi
 
     // 批量插入文档
     let inserted = 0;
-    const now = new Date().toISOString();
+    const now = nowShanghaiString();
     
     for (const record of allRecords) {
       const docId = uuidv4();

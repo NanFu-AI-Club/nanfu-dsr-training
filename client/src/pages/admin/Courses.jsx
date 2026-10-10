@@ -480,6 +480,9 @@ export default function Courses() {
                       <th className="table-header">课程信息</th>
                       <th className="table-header w-20">类型</th>
                       <th className="table-header w-20">时长</th>
+                      <th className="table-header w-24">学习人数</th>
+                      <th className="table-header w-20">学习次数</th>
+                      <th className="table-header w-28">累计学习时长</th>
                       <th className="table-header w-24">分类</th>
                       <th className="table-header w-20">排序</th>
                       <th className="table-header w-24">操作</th>
@@ -522,6 +525,19 @@ export default function Courses() {
                             )}
                           </td>
                           <td className="table-cell text-warm-500">{course.duration ? `${course.duration}分钟` : '-'}</td>
+                          <td className="table-cell">
+                            <div className="font-medium text-warm-700">{course.learner_count || 0} 人</div>
+                            <div className="text-xs text-warm-400">完成 {course.completed_count || 0} 人</div>
+                          </td>
+                          <td className="table-cell">
+                            <div className="font-semibold text-primary-700">{course.learn_count || 0} 次</div>
+                            <div className="text-xs text-warm-400">
+                              人均 {(course.learner_count ? (course.learn_count / course.learner_count) : 0).toFixed(1)} 次
+                            </div>
+                          </td>
+                          <td className="table-cell text-warm-500">
+                            {course.total_watch_time ? `${(course.total_watch_time / 3600).toFixed(1)} 小时` : '0 小时'}
+                          </td>
                           <td className="table-cell">
                             {course.category && <span className="badge-gray text-xs">{course.category}</span>}
                           </td>
